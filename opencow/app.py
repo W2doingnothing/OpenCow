@@ -24,6 +24,7 @@ from opencow.tools.filesystem import edit_file, list_dir, read_file, write_file
 from opencow.tools.search import glob, grep
 from opencow.tools.shell import exec_cmd
 from opencow.tools.web import web_fetch, web_search
+from opencow.tools import cron as cron_tools
 from opencow.utils.helpers import ensure_dir
 
 _LLM_TIMEOUT_SECONDS = 120
@@ -107,6 +108,7 @@ class OpenCow:
             store_path=cron_path,
             on_job=self._handle_cron_job,
         )
+        cron_tools.set_cron_service(self.cron)
 
         # Heartbeat (Phase 2)
         from opencow.heartbeat.service import HeartbeatService
@@ -179,9 +181,29 @@ class OpenCow:
         print("OpenCow ready. Type /help for commands, /stop to exit.")
         print()
 
+        async def _next_message() -> InboundMessage:
+            """Read inbound messages while also delivering outbound notifications."""
+            while True:
+                # Poll: check outbound queue first (non-blocking), then wait for inbound
+                if self.bus.outbound_size > 0:
+                    out = await self.bus.consume_outbound()
+                    try:
+                        await cli.send(out)
+                    except Exception:
+                        pass
+                    continue
+
+                # Short timeout on inbound so we periodically check outbound
+                try:
+                    inbound_task = asyncio.create_task(self.bus.consume_inbound())
+                    msg = await asyncio.wait_for(inbound_task, timeout=1.0)
+                    return msg
+                except asyncio.TimeoutError:
+                    pass
+
         try:
             while self._running:
-                msg = await self.bus.consume_inbound()
+                msg = await _next_message()
 
                 text = msg.text.strip().lower()
 
@@ -275,6 +297,9 @@ class OpenCow:
         registry.register(exec_cmd)
         registry.register(web_search)
         registry.register(web_fetch)
+        registry.register(cron_tools.add_cron)
+        registry.register(cron_tools.list_cron)
+        registry.register(cron_tools.remove_cron)
         return registry
 
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
@@ -356,11 +381,26 @@ class OpenCow:
         return None
 
     async def _handle_cron_job(self, job) -> str | None:
-        """Callback: execute a cron job prompt through the agent."""
-        from opencow.cron.types import CronJob
+        """Callback: execute a cron job prompt and deliver result to the bus."""
         result = await self.run(str(job.prompt), session_key="cron:default", channel="cron")
+        # Publish to outbound bus so the serve() loop can deliver it to the user
+        if result:
+            await self.bus.publish_outbound(OutboundMessage(
+                content=f"[Cron: {job.id[:8]}] {result}",
+                channel="cli",
+                chat_id="cli-default",
+                session_key="cron:default",
+            ))
         return result
 
     async def _handle_heartbeat_task(self, task_summary: str) -> str:
-        """Callback: execute a heartbeat-triggered task."""
-        return await self.run(task_summary, session_key="heartbeat:default", channel="heartbeat")
+        """Callback: execute a heartbeat-triggered task and deliver result."""
+        result = await self.run(task_summary, session_key="heartbeat:default", channel="heartbeat")
+        if result:
+            await self.bus.publish_outbound(OutboundMessage(
+                content=f"[Heartbeat] {result}",
+                channel="cli",
+                chat_id="cli-default",
+                session_key="heartbeat:default",
+            ))
+        return result
