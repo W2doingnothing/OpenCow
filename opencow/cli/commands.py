@@ -149,9 +149,14 @@ def serve(
         Optional[str],
         typer.Option("--config", "-c", help="Path to config.json"),
     ] = None,
+    host: Annotated[str, typer.Option("--host", "-h", help="Bind address")] = "0.0.0.0",
+    port: Annotated[int, typer.Option("--port", "-p", help="Bind port")] = 8080,
 ) -> None:
     """Start the OpenAI-compatible API server."""
-    print("API server not yet implemented — coming in Phase 2.")
+    from opencow.app import OpenCow
+
+    cow = OpenCow.from_config(config)
+    asyncio.run(cow.serve_api(host=host, port=port))
 
 
 def main() -> None:
