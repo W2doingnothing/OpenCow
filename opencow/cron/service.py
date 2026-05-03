@@ -215,6 +215,19 @@ class CronService:
         return min(times) if times else None
 
     def _arm_timer(self) -> None:
+        """Re-arm the timer for the next due job.
+
+        Safe to call from both async and sync contexts. When called from a
+        sync context (e.g. LangChain tool executing in a thread pool), the
+        timer is NOT re-armed -- the main cron loop will pick up the change
+        on its next wake (within max_sleep_ms).
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Sync context -- skip, the main loop will handle it
+            return
+
         if self._timer_task:
             self._timer_task.cancel()
 
@@ -233,7 +246,7 @@ class CronService:
             if self._running:
                 await self._on_timer()
 
-        self._timer_task = asyncio.create_task(_tick())
+        self._timer_task = loop.create_task(_tick())
 
     async def _on_timer(self) -> None:
         self._load_store()

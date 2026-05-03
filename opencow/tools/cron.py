@@ -183,7 +183,7 @@ def list_cron(action: str = "list") -> str:
 
 
 @tool(args_schema=RemoveCronInput)
-def remove_cron(action: str = "remove", job_id: str = "") -> str:
+async def remove_cron(action: str = "remove", job_id: str = "") -> str:
     """Remove a scheduled cron job by its ID."""
     if _cron_service is None:
         return "Error: cron service not available"
