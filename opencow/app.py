@@ -199,40 +199,22 @@ class OpenCow:
                         print("Nothing new to remember.")
                     continue
 
-                is_cmd = self.commands.is_command(msg.text)
-                label = "(cmd)" if is_cmd else "(llm)"
-                print(f"[{label}] {msg.text[:60]}{'...' if len(msg.text) > 60 else ''}", flush=True)
+                print(f"[...] {msg.text[:60]}{'...' if len(msg.text) > 60 else ''}", flush=True)
 
                 result = await self._process_message(msg)
-                if result and result.content:
-                    c = result.content
-                    # Write to a debug file so we can verify content exists
-                    debug_file = self.workspace / "debug_output.txt"
-                    debug_file.write_text(c, encoding="utf-8")
-                    print(f"[done] reply len={len(c)}, also wrote to debug_output.txt", flush=True)
-                    # Print content with explicit encoding
-                    try:
-                        sys.stdout.buffer.write(c.encode("utf-8") + b"\n")
-                        sys.stdout.buffer.flush()
-                    except Exception:
-                        pass
-                else:
-                    print(f"[done] empty result={result is not None}", flush=True)
 
                 # Record in history
                 self.memory_store.append_history(f"user: {msg.text}")
                 if result and result.content:
                     self.memory_store.append_history(f"assistant: {result.content[:200]}")
-                except Exception as e:
-                    # If cli.send fails, dump content directly to stdout
+
+                try:
                     if result and result.content:
-                        try:
-                            sys.stdout.write(f"\n{result.content}\n\n")
-                            sys.stdout.flush()
-                        except Exception:
-                            print(f"(display error: {e})", flush=True)
+                        await cli.send(result)
                     else:
-                        print(f"(display error: {e})", flush=True)
+                        print("(no response)", flush=True)
+                except Exception:
+                    print("(display error)", flush=True)
 
         except asyncio.CancelledError:
             pass
