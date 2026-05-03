@@ -29,22 +29,28 @@ class CliChannel(BaseChannel):
         self._running = False
 
     async def listen(self) -> None:
-        """Read from stdin in a loop, publish to inbound bus."""
+        """Read from stdin in a loop, publish to inbound bus.
+
+        Uses asyncio.to_thread for non-blocking stdin reads. This avoids
+        issues with run_in_executor + sys.stdin.readline on Windows.
+        """
         self._running = True
-        loop = asyncio.get_event_loop()
 
         while self._running:
             try:
-                line = await loop.run_in_executor(None, sys.stdin.readline)
+                line = await asyncio.to_thread(sys.stdin.readline)
             except (EOFError, KeyboardInterrupt):
                 break
 
             if not line:
+                # Empty string means EOF (Ctrl+Z on Windows, Ctrl+D on Unix)
                 break
 
             text = line.strip()
             if not text:
                 continue
+
+            logger.debug("CLI inbound: {}", text[:60])
 
             msg = InboundMessage(
                 text=text,
@@ -60,7 +66,6 @@ class CliChannel(BaseChannel):
         try:
             print(f"\n{content}\n", flush=True)
         except UnicodeEncodeError:
-            # Windows GBK console can't print emoji; strip them
             safe = content.encode("gbk", errors="replace").decode("gbk")
             print(f"\n{safe}\n", flush=True)
 

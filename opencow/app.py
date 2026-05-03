@@ -199,9 +199,12 @@ class OpenCow:
                         print("Nothing new to remember.")
                     continue
 
-                print(f"[...] {msg.text[:60]}{'...' if len(msg.text) > 60 else ''}", flush=True)
+                is_cmd = self.commands.is_command(msg.text)
+                label = "(cmd)" if is_cmd else "(llm)"
+                print(f"[{label}] {msg.text[:60]}{'...' if len(msg.text) > 60 else ''}", flush=True)
 
                 result = await self._process_message(msg)
+                print(f"[done] got {'reply' if result and result.content else 'empty'}", flush=True)
 
                 # Record in history
                 self.memory_store.append_history(f"user: {msg.text}")
