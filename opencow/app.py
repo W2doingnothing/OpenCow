@@ -118,7 +118,7 @@ class OpenCow:
             chat_model=self.chat_model,
             model=self._model_name,
             on_execute=self._handle_heartbeat_task,
-            interval_s=30 * 60,
+            interval_s=5 * 60,  # Check every 5 minutes
             enabled=True,
             timezone=config.agents.defaults.timezone,
         )
@@ -442,6 +442,7 @@ class OpenCow:
 
     async def _handle_heartbeat_task(self, task_summary: str) -> str:
         """Callback: execute a heartbeat-triggered task and deliver result."""
+        print(f"\n[Heartbeat] Checking task: {task_summary[:80]}...", flush=True)
         result = await self.run(task_summary, session_key="heartbeat:default", channel="heartbeat")
         if result:
             await self.bus.publish_outbound(OutboundMessage(

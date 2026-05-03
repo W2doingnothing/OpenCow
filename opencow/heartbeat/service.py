@@ -108,6 +108,7 @@ class HeartbeatService:
         while self._running:
             try:
                 await asyncio.sleep(self.interval_s)
+                logger.info("Heartbeat: checking HEARTBEAT.md...")
                 decision, summary = await self.check()
 
                 if decision == "run" and self.on_execute:
