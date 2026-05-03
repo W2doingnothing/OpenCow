@@ -55,9 +55,14 @@ class CliChannel(BaseChannel):
             await self.bus.publish_inbound(msg)
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Print output to stdout."""
+        """Print output to stdout, safe against Windows encoding issues."""
         content = msg.content
-        print(f"\n{content}\n")
+        try:
+            print(f"\n{content}\n", flush=True)
+        except UnicodeEncodeError:
+            # Windows GBK console can't print emoji; strip them
+            safe = content.encode("gbk", errors="replace").decode("gbk")
+            print(f"\n{safe}\n", flush=True)
 
     async def send_stream(self, delta: str) -> None:
         """Print a stream delta to stdout without newline."""

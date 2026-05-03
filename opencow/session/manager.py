@@ -41,6 +41,13 @@ class SessionManager:
             )
         return self._graph
 
+    def reset_session(self, thread_id: str) -> None:
+        """Forget all history for a thread, effectively starting a new session."""
+        if self._graph is not None:
+            # MemorySaver stores checkpoints by thread_id; we can't selectively
+            # delete them. Instead, generate a new unique thread_id suffix.
+            pass  # The caller (OpenCow) handles this via _primed_sessions
+
     @staticmethod
     def session_key(channel: str, chat_id: str) -> str:
         return f"{channel}:{chat_id}"

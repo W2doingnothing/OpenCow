@@ -124,6 +124,11 @@ class OpenCow:
         self.bus = MessageBus()
         self._running = False
 
+        # Track which sessions have already received a system prompt.
+        # Only inject system prompt on the first message of each session;
+        # subsequent messages just pass the user input (history is in checkpointer).
+        self._primed_sessions: set[str] = set()
+
     # -- public API -----------------------------------------------------------
 
     @classmethod
@@ -149,6 +154,10 @@ class OpenCow:
         )
         result = await self._process_message(msg)
         return result.content if result else ""
+
+    def forget_session(self, session_key: str) -> None:
+        """Clear session priming so the next message re-injects a fresh system prompt."""
+        self._primed_sessions.discard(session_key)
 
     async def serve(self) -> None:
         """Run in interactive CLI mode with all Phase 2 services."""
@@ -199,10 +208,13 @@ class OpenCow:
                 if result and result.content:
                     self.memory_store.append_history(f"assistant: {result.content[:200]}")
 
-                if result and result.content:
-                    await cli.send(result)
-                else:
-                    print("(no response)", flush=True)
+                try:
+                    if result and result.content:
+                        await cli.send(result)
+                    else:
+                        print("(no response)", flush=True)
+                except Exception:
+                    print("(display error)", flush=True)
 
         except asyncio.CancelledError:
             pass
@@ -285,11 +297,20 @@ class OpenCow:
         user_content = f"{runtime_ctx}\n\n{msg.text}"
         config_dict = {"configurable": {"thread_id": key}}
 
+        # Only inject the system prompt on the FIRST message of a session.
+        # Subsequent messages carry the context via the checkpointer's history.
+        is_new_session = key not in self._primed_sessions
+        if is_new_session:
+            self._primed_sessions.add(key)
+            input_messages = [("system", system_prompt), ("user", user_content)]
+        else:
+            input_messages = [("user", user_content)]
+
         try:
             result = await asyncio.wait_for(
                 graph.ainvoke(
                     {
-                        "messages": [("system", system_prompt), ("user", user_content)],
+                        "messages": input_messages,
                         "session_key": key,
                         "iteration_count": 0,
                         "empty_response_count": 0,
