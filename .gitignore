@@ -13,6 +13,7 @@ venv/
 
 # opencow
 LOCAL_GUIDE.md
+CHANGELOG.md
 
 # Sessions and workspace data
 *.db
