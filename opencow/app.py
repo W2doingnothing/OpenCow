@@ -416,20 +416,21 @@ class OpenCow:
         to = job.payload.to or "cli-default"
 
         # Use a dedicated session so cron interactions don't corrupt user history
-        result = await self.run(message, session_key=f"cron:{job.id}", channel=channel)
+        cron_session_key = f"cron:{job.id}"
+        result = await self.run(message, session_key=cron_session_key, channel=channel)
 
         if result and job.payload.deliver:
             # Set context so nested cron calls within execute would work correctly
             cron_tools.set_context(
                 channel=channel,
                 chat_id=to,
-                session_key=session_key,
+                session_key=cron_session_key,
             )
             await self.bus.publish_outbound(OutboundMessage(
                 content=f"[Cron: {job.name}] {result}",
                 channel=channel,
                 chat_id=to,
-                session_key=session_key,
+                session_key=cron_session_key,
             ))
         return result
 
