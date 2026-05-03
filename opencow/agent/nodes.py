@@ -3,12 +3,72 @@
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt import ToolNode
 
 from opencow.agent.state import AgentState
 
 _MAX_EMPTY_RETRIES = 2
+
+
+def _sanitize_messages(messages: list[Any]) -> list[Any]:
+    """Remove orphaned tool_calls that lack matching ToolMessages.
+
+    Some APIs (DeepSeek, strict OpenAI-compatible) reject messages if an
+    AIMessage with tool_calls is not immediately followed by the
+    corresponding ToolMessage(s). This can happen after timeouts or partial
+    failures leave the checkpointer state corrupted.
+
+    Strategy: walk the list, and for each AIMessage with tool_calls, verify
+    that the next N messages are ToolMessages with matching tool_call_ids.
+    If not, strip the tool_calls from the AIMessage (converting it to a
+    plain text message).
+    """
+    if not messages:
+        return messages
+
+    cleaned: list[Any] = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            tc_ids = {tc["id"] for tc in msg.tool_calls if isinstance(tc, dict) and "id" in tc}
+            if not tc_ids:
+                cleaned.append(msg)
+                i += 1
+                continue
+
+            # Collect the ToolMessages that follow this AIMessage
+            tool_msgs: list[Any] = []
+            j = i + 1
+            while j < len(messages) and isinstance(messages[j], ToolMessage):
+                tool_msgs.append(messages[j])
+                j += 1
+
+            # Check if all tool_call_ids are covered
+            tm_ids = {tm.tool_call_id for tm in tool_msgs if hasattr(tm, "tool_call_id")}
+            if tc_ids == tm_ids and len(tool_msgs) == len(tc_ids):
+                # Valid: keep the AIMessage + ToolMessages
+                cleaned.append(msg)
+                cleaned.extend(tool_msgs)
+                i = j
+            else:
+                # Orphaned tool_calls: strip tool_calls, keep as plain message
+                content = msg.content or ""
+                if isinstance(content, list):
+                    content = " ".join(
+                        b.get("text", "") if isinstance(b, dict) else str(b)
+                        for b in content
+                    )
+                cleaned.append(AIMessage(content=content or "[tool calls omitted]"))
+                # Skip the ToolMessages too (they're orphaned without their parent)
+                i = j
+        else:
+            cleaned.append(msg)
+            i += 1
+
+    return cleaned
 
 
 def make_call_model_node(chat_model: BaseChatModel, tools: list[Any]):
@@ -17,7 +77,7 @@ def make_call_model_node(chat_model: BaseChatModel, tools: list[Any]):
     model_with_tools = chat_model.bind_tools(tools)
 
     async def call_model(state: AgentState) -> dict[str, Any]:
-        messages = state["messages"]
+        messages = _sanitize_messages(list(state["messages"]))
         iteration = state.get("iteration_count", 0)
         empty_count = state.get("empty_response_count", 0)
 
