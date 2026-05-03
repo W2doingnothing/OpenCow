@@ -64,7 +64,8 @@ async def add_cron(
     deliver: bool = True,
     tz: str = "",
 ) -> str:
-    """Schedule a reminder or recurring task.
+    """Schedule a reminder or recurring task. After creating, do NOT remove it --
+    the timer will fire automatically and the result will be delivered to the user.
 
     For ONE-TIME reminders (e.g. "remind me at 3pm"), use the 'at' parameter
     with an ISO datetime like '2026-05-03T15:00:00'.

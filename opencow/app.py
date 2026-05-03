@@ -164,6 +164,17 @@ class OpenCow:
         """Clear session priming so the next message re-injects a fresh system prompt."""
         self._primed_sessions.discard(session_key)
 
+    def _reset_corrupted_session(self, session_key: str) -> None:
+        """Replace the MemorySaver to clear all corrupted state.
+
+        Called when a tool-call sequence error or timeout leaves the
+        checkpointer in an unrecoverable state.
+        """
+        self._primed_sessions.discard(session_key)
+        self.sessions._graph = None
+        self.sessions._checkpointer = None
+        logger.warning("Session {} corrupted, resetting checkpointer", session_key)
+
     async def serve(self) -> None:
         """Run in interactive CLI mode with all Phase 2 services."""
         from opencow.channels.cli_channel import CliChannel
@@ -381,8 +392,12 @@ class OpenCow:
             msg_text = f"Request timed out ({_LLM_TIMEOUT_SECONDS}s). Check your API key and network."
             print(f"\n[ERROR] {msg_text}", flush=True)
             logger.error(msg_text)
+            self._reset_corrupted_session(key)
             return OutboundMessage(content=msg_text, channel=msg.channel, chat_id=msg.chat_id, session_key=key)
         except Exception as e:
+            if "tool_calls" in str(e) or "400" in str(e):
+                # Tool-call sequence corruption — reset session state
+                self._reset_corrupted_session(key)
             msg_text = f"Agent error: {e}"
             print(f"\n[ERROR] {msg_text}", flush=True)
             logger.exception("Agent run failed for session {}", key)
