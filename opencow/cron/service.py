@@ -316,10 +316,14 @@ class CronService:
         self._arm_timer()
         logger.info("Cron service started with {} jobs", len(self._store.jobs if self._store else []))
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self._running = False
         if self._timer_task:
             self._timer_task.cancel()
+            try:
+                await self._timer_task
+            except asyncio.CancelledError:
+                pass
             self._timer_task = None
 
     def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:
