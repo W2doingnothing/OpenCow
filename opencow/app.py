@@ -205,7 +205,17 @@ class OpenCow:
 
                 result = await self._process_message(msg)
                 if result and result.content:
-                    print(f"[done] reply len={len(result.content)}", flush=True)
+                    c = result.content
+                    # Write to a debug file so we can verify content exists
+                    debug_file = self.workspace / "debug_output.txt"
+                    debug_file.write_text(c, encoding="utf-8")
+                    print(f"[done] reply len={len(c)}, also wrote to debug_output.txt", flush=True)
+                    # Print content with explicit encoding
+                    try:
+                        sys.stdout.buffer.write(c.encode("utf-8") + b"\n")
+                        sys.stdout.buffer.flush()
+                    except Exception:
+                        pass
                 else:
                     print(f"[done] empty result={result is not None}", flush=True)
 
@@ -213,14 +223,6 @@ class OpenCow:
                 self.memory_store.append_history(f"user: {msg.text}")
                 if result and result.content:
                     self.memory_store.append_history(f"assistant: {result.content[:200]}")
-
-                try:
-                    if result and result.content:
-                        # Print directly first, then via channel
-                        sys.stdout.write(f"\n{result.content}\n\n")
-                        sys.stdout.flush()
-                    else:
-                        print("(no response)", flush=True)
                 except Exception as e:
                     # If cli.send fails, dump content directly to stdout
                     if result and result.content:
