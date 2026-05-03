@@ -80,6 +80,7 @@ class HeartbeatService:
             decision = "run" if first_word == "RUN" else "skip"
             lines = content.split("\n")
             summary = lines[1].strip() if len(lines) > 1 else None
+            return decision, summary
         except Exception:
             logger.exception("Heartbeat decision check failed")
             return "skip", None
