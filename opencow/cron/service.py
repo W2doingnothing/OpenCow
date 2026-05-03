@@ -115,7 +115,7 @@ class CronService:
             return
         if self.store_path.exists():
             try:
-                raw = json.loads(self.store_path.read_text(encoding="utf-8"))
+                raw = json.loads(self.store_path.read_text(encoding="utf-8", errors="replace"))
                 jobs = {
                     k: CronJob(**v) if isinstance(v, dict) else v
                     for k, v in raw.get("jobs", {}).items()
@@ -133,31 +133,37 @@ class CronService:
     def _save(self) -> None:
         if self._store is None:
             return
-        raw = {
-            "jobs": {
-                k: {
-                    "id": v.id,
-                    "schedule": {
-                        "kind": v.schedule.kind,
-                        "at_ms": v.schedule.at_ms,
-                        "every_ms": v.schedule.every_ms,
-                        "expr": v.schedule.expr,
-                        "tz": v.schedule.tz,
-                    },
-                    "prompt": v.prompt,
-                    "state": v.state,
-                    "created_at": v.created_at,
-                    "last_run_at": v.last_run_at,
-                    "next_run_at": v.next_run_at,
-                }
-                for k, v in self._store.jobs.items()
-            },
-            "run_history": [
-                {"job_id": h.job_id, "run_at": h.run_at, "result": h.result, "error": h.error}
-                for h in self._store.run_history[-self._MAX_RUN_HISTORY:]
-            ],
-        }
-        self.store_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False))
+        try:
+            raw = {
+                "jobs": {
+                    k: {
+                        "id": v.id,
+                        "schedule": {
+                            "kind": v.schedule.kind,
+                            "at_ms": v.schedule.at_ms,
+                            "every_ms": v.schedule.every_ms,
+                            "expr": v.schedule.expr,
+                            "tz": v.schedule.tz,
+                        },
+                        "prompt": v.prompt,
+                        "state": v.state,
+                        "created_at": v.created_at,
+                        "last_run_at": v.last_run_at,
+                        "next_run_at": v.next_run_at,
+                    }
+                    for k, v in self._store.jobs.items()
+                },
+                "run_history": [
+                    {"job_id": h.job_id, "run_at": h.run_at, "result": h.result, "error": h.error}
+                    for h in self._store.run_history[-self._MAX_RUN_HISTORY:]
+                ],
+            }
+            self.store_path.write_text(
+                json.dumps(raw, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.exception("Failed to save cron store")
 
     async def _loop(self) -> None:
         while self._running:
