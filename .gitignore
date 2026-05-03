@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# opencow
+LOCAL_GUIDE.md
+
+# Sessions and workspace data
+*.db
+*.sqlite
