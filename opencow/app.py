@@ -107,6 +107,7 @@ class OpenCow:
         self.cron = CronService(
             store_path=cron_path,
             on_job=self._handle_cron_job,
+            max_sleep_ms=10_000,  # Check every 10s for due jobs
         )
         cron_tools.set_cron_service(self.cron)
 
