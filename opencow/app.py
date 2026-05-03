@@ -216,7 +216,9 @@ class OpenCow:
 
                 try:
                     if result and result.content:
-                        await cli.send(result)
+                        # Print directly first, then via channel
+                        sys.stdout.write(f"\n{result.content}\n\n")
+                        sys.stdout.flush()
                     else:
                         print("(no response)", flush=True)
                 except Exception as e:
