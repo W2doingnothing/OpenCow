@@ -62,25 +62,24 @@ class HeartbeatService:
         from langchain_core.messages import HumanMessage
 
         prompt = (
-            "You are a task-checking agent. Below is a list of potential tasks "
-            "described in a HEARTBEAT.md file. Review them and decide if any "
-            "of them are active and need attention RIGHT NOW.\n\n"
+            "You are a task-checking agent. Below is a list of tasks from a "
+            "HEARTBEAT.md file. If the list contains ANY task that can be "
+            "executed, you MUST say RUN. Only say SKIP if the file is empty "
+            "or all tasks are already completed.\n\n"
             f"Tasks:\n{tasks_text}\n\n"
-            "Reply with exactly one word on the first line: RUN if there are "
-            "active tasks to execute, or SKIP if there is nothing to do. "
-            "If RUN, include a one-line summary of the tasks on the second line."
+            "Reply with ONLY one word on the first line: RUN or SKIP.\n"
+            "If you reply RUN, put a brief task summary on the second line."
         )
 
         try:
             response = await self.chat_model.ainvoke([HumanMessage(content=prompt)])
             content = (getattr(response, "content", "") or "").strip()
+            logger.debug("Heartbeat LLM response: {}", content[:200])
+            # Parse: first word of first line
+            first_word = content.split()[0].upper().rstrip(".,;:!?") if content.strip() else "SKIP"
+            decision = "run" if first_word == "RUN" else "skip"
             lines = content.split("\n")
-            decision = lines[0].upper().strip() if lines else "SKIP"
             summary = lines[1].strip() if len(lines) > 1 else None
-
-            if "RUN" in decision:
-                return "run", summary or "Active tasks found"
-            return "skip", None
         except Exception:
             logger.exception("Heartbeat decision check failed")
             return "skip", None

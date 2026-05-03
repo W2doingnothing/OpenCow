@@ -118,7 +118,7 @@ class OpenCow:
             chat_model=self.chat_model,
             model=self._model_name,
             on_execute=self._handle_heartbeat_task,
-            interval_s=5 * 60,  # Check every 5 minutes
+            interval_s=60,  # Check every 1 minute
             enabled=True,
             timezone=config.agents.defaults.timezone,
         )
