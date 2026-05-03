@@ -203,10 +203,13 @@ class OpenCow:
 
                 result = await self._process_message(msg)
 
-                # Record in history
-                self.memory_store.append_history(f"user: {msg.text}")
-                if result and result.content:
-                    self.memory_store.append_history(f"assistant: {result.content[:200]}")
+                # Record in history (best-effort, never crash)
+                try:
+                    self.memory_store.append_history(f"user: {msg.text}")
+                    if result and result.content:
+                        self.memory_store.append_history(f"assistant: {result.content[:200]}")
+                except Exception:
+                    pass
 
                 try:
                     if result and result.content:

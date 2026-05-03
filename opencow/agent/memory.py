@@ -100,8 +100,15 @@ class MemoryStore:
     def _read_all_history(self) -> list[dict[str, Any]]:
         if not self.history_file.exists():
             return []
+        try:
+            raw = self.history_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            # File corrupted (e.g. mixed GBK/UTF-8 bytes) -- delete and start fresh
+            logger.warning("history.jsonl corrupted, resetting")
+            self.history_file.unlink(missing_ok=True)
+            return []
         entries = []
-        for line in self.history_file.read_text(encoding="utf-8").strip().split("\n"):
+        for line in raw.strip().split("\n"):
             if line:
                 try:
                     entries.append(json.loads(line))
@@ -111,13 +118,16 @@ class MemoryStore:
 
     def _trim_history(self) -> None:
         """Keep only the most recent N entries."""
-        entries = self._read_all_history()
-        if len(entries) > self.max_history_entries:
-            trimmed = entries[-self.max_history_entries:]
-            self.history_file.write_text(
-                "\n".join(json.dumps(e, ensure_ascii=False) for e in trimmed) + "\n",
-                encoding="utf-8",
-            )
+        try:
+            entries = self._read_all_history()
+            if len(entries) > self.max_history_entries:
+                trimmed = entries[-self.max_history_entries:]
+                self.history_file.write_text(
+                    "\n".join(json.dumps(e, ensure_ascii=False) for e in trimmed) + "\n",
+                    encoding="utf-8",
+                )
+        except Exception:
+            logger.exception("Failed to trim history")
 
 
 # ---------------------------------------------------------------------------
