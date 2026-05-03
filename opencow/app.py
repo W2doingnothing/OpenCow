@@ -391,13 +391,17 @@ class OpenCow:
         return None
 
     async def _handle_cron_job(self, job) -> str | None:
-        """Callback: execute a cron job prompt and deliver to the configured channel."""
+        """Callback: execute a cron job prompt and deliver to the configured channel.
+
+        Uses a SEPARATE session key (cron:<id>) to avoid polluting the user's
+        conversation history with cron tool-call sequences.
+        """
         message = job.payload.message
         channel = job.payload.channel or "cli"
         to = job.payload.to or "cli-default"
-        session_key = job.payload.session_key or f"{channel}:{to}"
 
-        result = await self.run(message, session_key=session_key, channel=channel)
+        # Use a dedicated session so cron interactions don't corrupt user history
+        result = await self.run(message, session_key=f"cron:{job.id}", channel=channel)
 
         if result and job.payload.deliver:
             # Set context so nested cron calls within execute would work correctly
