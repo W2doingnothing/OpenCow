@@ -14,9 +14,16 @@ def create_agent_graph(
     chat_model: BaseChatModel,
     tools: list[Any],
     *,
-    recursion_limit: int = 200,
+    checkpointer: Any = None,
 ):
-    """Build a compiled LangGraph agent graph backed by in-memory checkpointer.
+    """Build a compiled LangGraph agent graph.
+
+    Args:
+        chat_model: The LLM to use.
+        tools: List of LangChain tools available to the agent.
+        checkpointer: A LangGraph checkpointer instance. If None, a fresh
+            MemorySaver is created. **Always pass the same checkpointer
+            instance to preserve conversation history across turns.**
 
     Graph structure:
         START -> call_model -> [has tool_calls?]
@@ -39,4 +46,4 @@ def create_agent_graph(
     )
     workflow.add_edge("execute_tools", "call_model")
 
-    return workflow.compile(checkpointer=MemorySaver())
+    return workflow.compile(checkpointer=checkpointer or MemorySaver())

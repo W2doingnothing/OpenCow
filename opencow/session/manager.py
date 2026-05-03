@@ -1,21 +1,23 @@
-"""Session manager -- wraps LangGraph MemorySaver-backed graphs."""
+"""Session manager -- wraps LangGraph MemorySaver-backed graphs.
+
+The compiled graph with its MemorySaver is created once and cached.
+All sessions share the same checkpointer, separated by thread_id.
+"""
 
 from typing import Any
+
+from langgraph.checkpoint.memory import MemorySaver
 
 from opencow.agent.graph import create_agent_graph
 
 
 class SessionManager:
-    """Manages agent sessions backed by LangGraph's MemorySaver.
-
-    Each session has a unique thread_id, tracked by the checkpointer.
-    Conversations persist within a process lifetime; restart = clean slate.
-    SQLite persistence will be added when langgraph-checkpoint-sqlite stabilizes.
-    """
+    """Manages agent sessions backed by a single shared MemorySaver instance."""
 
     def __init__(self, db_path: str = "") -> None:
-        # db_path kept for API compatibility; MemorySaver doesn't use it.
         self._db_path = db_path
+        self._graph: Any = None
+        self._checkpointer: MemorySaver | None = None
 
     def get_graph(
         self,
@@ -24,11 +26,20 @@ class SessionManager:
         *,
         recursion_limit: int = 200,
     ):
-        return create_agent_graph(
-            chat_model=chat_model,
-            tools=tools,
-            recursion_limit=recursion_limit,
-        )
+        """Return the compiled agent graph, creating it on first call.
+
+        The graph and its MemorySaver are cached -- subsequent calls return
+        the SAME instance, so conversation history is preserved across turns
+        (separated by thread_id in the config).
+        """
+        if self._graph is None:
+            self._checkpointer = MemorySaver()
+            self._graph = create_agent_graph(
+                chat_model=chat_model,
+                tools=tools,
+                checkpointer=self._checkpointer,
+            )
+        return self._graph
 
     @staticmethod
     def session_key(channel: str, chat_id: str) -> str:
