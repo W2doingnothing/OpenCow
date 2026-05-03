@@ -150,11 +150,13 @@ class OpenCow:
         session_key: str = "cli:default",
         channel: str = "cli",
     ) -> str:
+        chat_id = session_key.split(":", 1)[1] if ":" in session_key else "default"
         msg = InboundMessage(
             text=message,
             channel=channel,
-            chat_id=session_key.split(":", 1)[1] if ":" in session_key else "default",
+            chat_id=chat_id,
         )
+        cron_tools.set_context(channel=channel, chat_id=chat_id, session_key=session_key)
         result = await self._process_message(msg)
         return result.content if result else ""
 
@@ -223,6 +225,13 @@ class OpenCow:
                     continue
 
                 print(f"[...] {msg.text[:60]}{'...' if len(msg.text) > 60 else ''}", flush=True)
+
+                # Set cron context so tools capture the current channel/chat
+                cron_tools.set_context(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    session_key=msg.session_key,
+                )
 
                 result = await self._process_message(msg)
 
@@ -382,15 +391,26 @@ class OpenCow:
         return None
 
     async def _handle_cron_job(self, job) -> str | None:
-        """Callback: execute a cron job prompt and deliver result to the bus."""
-        result = await self.run(str(job.prompt), session_key="cron:default", channel="cron")
-        # Publish to outbound bus so the serve() loop can deliver it to the user
-        if result:
+        """Callback: execute a cron job prompt and deliver to the configured channel."""
+        message = job.payload.message
+        channel = job.payload.channel or "cli"
+        to = job.payload.to or "cli-default"
+        session_key = job.payload.session_key or f"{channel}:{to}"
+
+        result = await self.run(message, session_key=session_key, channel=channel)
+
+        if result and job.payload.deliver:
+            # Set context so nested cron calls within execute would work correctly
+            cron_tools.set_context(
+                channel=channel,
+                chat_id=to,
+                session_key=session_key,
+            )
             await self.bus.publish_outbound(OutboundMessage(
-                content=f"[Cron: {job.id[:8]}] {result}",
-                channel="cli",
-                chat_id="cli-default",
-                session_key="cron:default",
+                content=f"[Cron: {job.name}] {result}",
+                channel=channel,
+                chat_id=to,
+                session_key=session_key,
             ))
         return result
 

@@ -1,123 +1,197 @@
-"""Cron management tools -- add, list, remove scheduled tasks."""
+"""Cron management tools — schedule reminders and recurring tasks."""
+
+from contextvars import ContextVar
+from datetime import datetime
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from opencow.cron.service import CronService
+from opencow.cron.types import CronSchedule
 
-# Global reference set by OpenCow.__init__
-_cron_service = None
+# Global reference + context set by OpenCow
+_cron_service: CronService | None = None
+_channel: ContextVar[str] = ContextVar("cron_channel", default="")
+_chat_id: ContextVar[str] = ContextVar("cron_chat_id", default="")
+_session_key: ContextVar[str] = ContextVar("cron_session_key", default="")
+_metadata: ContextVar[dict] = ContextVar("cron_metadata", default={})
 
 
-def set_cron_service(service) -> None:
+def set_cron_service(service: CronService) -> None:
     global _cron_service
     _cron_service = service
 
 
+def set_context(channel: str, chat_id: str, session_key: str = "", metadata: dict | None = None) -> None:
+    _channel.set(channel)
+    _chat_id.set(chat_id)
+    _session_key.set(session_key or f"{channel}:{chat_id}")
+    _metadata.set(metadata or {})
+
+
 class AddCronInput(BaseModel):
-    prompt: str = Field(description="What to tell the agent when the timer fires")
-    every_seconds: int = Field(
-        default=0,
-        description="Repeat interval in seconds. Use ONLY for repeating tasks.",
-    )
-    every_minutes: int = Field(
-        default=0,
-        description="Repeat interval in minutes. Use ONLY for repeating tasks.",
-    )
-    every_hours: int = Field(
-        default=0,
-        description="Repeat interval in hours. Use ONLY for repeating tasks.",
-    )
-    at_datetime: str = Field(
-        default="",
-        description=(
-            "ISO datetime for a ONE-SHOT task (e.g. '2026-05-03T21:01:00'). "
-            "Use this INSTEAD of every_* for a once-off reminder. "
-            "IMPORTANT: always use the CURRENT YEAR (2026) and local timezone (Asia/Shanghai)."
-        ),
-    )
+    action: str = Field(default="add", description="Must be 'add'")
+    message: str = Field(description="Instruction for the agent when the job triggers (e.g. reminder text)")
+    name: str = Field(default="", description="Optional short label (e.g. 'daily-standup'). Defaults to first 30 chars of message")
+    every_seconds: int = Field(default=0, description="Interval in seconds for repeating tasks")
+    every_minutes: int = Field(default=0, description="Interval in minutes for repeating tasks")
+    every_hours: int = Field(default=0, description="Interval in hours for repeating tasks")
+    cron_expr: str = Field(default="", description="Cron expression like '0 9 * * *' for scheduled tasks")
+    at: str = Field(default="", description="ISO datetime for ONE-SHOT execution (e.g. '2026-05-03T21:01:00'). Naive times use Asia/Shanghai.")
+    deliver: bool = Field(default=True, description="Whether to deliver result to user (default true)")
+    tz: str = Field(default="", description="IANA timezone for cron expressions (e.g. 'Asia/Shanghai')")
 
 
 class ListCronInput(BaseModel):
-    pass
+    action: str = Field(default="list", description="Must be 'list'")
 
 
 class RemoveCronInput(BaseModel):
-    job_id: str = Field(description="The job ID to remove (use list_cron to find IDs)")
+    action: str = Field(default="remove", description="Must be 'remove'")
+    job_id: str = Field(description="Job ID to remove (use list to find IDs)")
 
 
 @tool(args_schema=AddCronInput)
 async def add_cron(
-    prompt: str,
+    action: str = "add",
+    message: str = "",
+    name: str = "",
     every_seconds: int = 0,
     every_minutes: int = 0,
     every_hours: int = 0,
-    at_datetime: str = "",
+    cron_expr: str = "",
+    at: str = "",
+    deliver: bool = True,
+    tz: str = "",
 ) -> str:
-    """Add a scheduled task. When the time comes, the agent will execute the prompt
-    and the result will be delivered to you.
+    """Schedule a reminder or recurring task.
 
-    For ONE-TIME reminders (e.g. "remind me at 3pm"), use at_datetime with an ISO
-    timestamp like '2026-05-03T15:00:00' (use Asia/Shanghai timezone).
+    For ONE-TIME reminders (e.g. "remind me at 3pm"), use the 'at' parameter
+    with an ISO datetime like '2026-05-03T15:00:00'.
 
-    For REPEATING tasks (e.g. "check every 5 minutes"), use every_* parameters.
+    For REPEATING tasks, use every_seconds / every_minutes / every_hours.
+
+    Use 'cron_expr' for complex schedules like '0 9 * * 1-5' (weekdays at 9am).
     """
     if _cron_service is None:
         return "Error: cron service not available"
 
-    from datetime import datetime
-    from opencow.cron.types import CronSchedule
+    if not message.strip():
+        return "Error: 'message' is required (what should the agent do when the job triggers?)"
 
-    if at_datetime:
-        # One-shot: parse the ISO datetime
-        try:
-            dt = datetime.fromisoformat(at_datetime)
-            at_ms = int(dt.timestamp() * 1000)
-            now_ms = int(datetime.now().timestamp() * 1000)
-            if at_ms <= now_ms:
-                return f"Error: at_datetime '{at_datetime}' is in the past (now is {datetime.now().strftime('%Y-%m-%dT%H:%M:%S')})"
-            schedule = CronSchedule(kind="at", at_ms=at_ms)
-            job = await _cron_service.add_job(prompt, schedule)
-            return f"One-shot job created: id={job.id} at {at_datetime}"
-        except ValueError as e:
-            return f"Error parsing at_datetime '{at_datetime}': {e}. Use ISO format like '2026-05-03T21:01:00'"
+    channel = _channel.get()
+    chat_id = _chat_id.get()
+    if not channel or not chat_id:
+        return "Error: no session context available"
 
-    # Repeating: interval-based
+    # Build schedule
+    delete_after = False
+    schedule: CronSchedule
+
     total_ms = (every_seconds + every_minutes * 60 + every_hours * 3600) * 1000
-    if total_ms <= 0:
-        return "Error: must specify at_datetime for one-shot, or every_seconds/every_minutes/every_hours for repeating"
 
-    schedule = CronSchedule(kind="every", every_ms=total_ms)
-    job = await _cron_service.add_job(prompt, schedule)
-    return f"Repeating job created: id={job.id} every {total_ms // 1000}s prompt='{prompt}'"
+    if at:
+        try:
+            dt = datetime.fromisoformat(at)
+        except ValueError:
+            return f"Error: invalid ISO datetime '{at}'. Use format '2026-05-03T21:01:00'"
+        if dt.tzinfo is None:
+            from zoneinfo import ZoneInfo
+            tz_name = tz or "Asia/Shanghai"
+            try:
+                dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+            except Exception:
+                return f"Error: unknown timezone '{tz_name}'"
+        at_ms = int(dt.timestamp() * 1000)
+        now_ms = int(datetime.now().timestamp() * 1000)
+        if at_ms <= now_ms:
+            return f"Error: 'at' time '{at}' is in the past"
+        schedule = CronSchedule(kind="at", at_ms=at_ms)
+        delete_after = True
+    elif cron_expr:
+        effective_tz = tz or "Asia/Shanghai"
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(effective_tz)
+        except Exception:
+            return f"Error: unknown timezone '{effective_tz}'"
+        schedule = CronSchedule(kind="cron", expr=cron_expr, tz=effective_tz)
+    elif total_ms > 0:
+        schedule = CronSchedule(kind="every", every_ms=total_ms)
+    else:
+        return "Error: specify 'at' (one-shot), 'every_seconds/minutes/hours' (repeating), or 'cron_expr' (cron schedule)"
+
+    job_name = name or message[:30]
+    job = _cron_service.add_job(
+        name=job_name,
+        schedule=schedule,
+        message=message,
+        deliver=deliver,
+        channel=channel,
+        to=chat_id,
+        delete_after_run=delete_after,
+        channel_meta=_metadata.get(),
+        session_key=_session_key.get() or None,
+    )
+
+    if schedule.kind == "at":
+        return f"One-shot job created: '{job.name}' (id: {job.id}) at {at}"
+    elif schedule.kind == "cron":
+        return f"Cron job created: '{job.name}' (id: {job.id}) schedule: {cron_expr}"
+    else:
+        secs = total_ms // 1000
+        return f"Repeating job created: '{job.name}' (id: {job.id}) every {secs}s"
 
 
 @tool(args_schema=ListCronInput)
-def list_cron() -> str:
+def list_cron(action: str = "list") -> str:
     """List all active scheduled cron jobs."""
     if _cron_service is None:
         return "Error: cron service not available"
 
     jobs = _cron_service.list_jobs()
     if not jobs:
-        return "No active cron jobs."
+        return "No scheduled jobs."
+
     lines = []
     for j in jobs:
+        kind = j.schedule.kind
+        if kind == "at":
+            dt = datetime.fromtimestamp((j.schedule.at_ms or 0) / 1000)
+            timing = f"at {dt.strftime('%Y-%m-%d %H:%M:%S')}"
+        elif kind == "cron":
+            timing = f"cron: {j.schedule.expr}"
+        elif j.schedule.every_ms:
+            ms = j.schedule.every_ms
+            if ms % 3600000 == 0:
+                timing = f"every {ms // 3600000}h"
+            elif ms % 60000 == 0:
+                timing = f"every {ms // 60000}m"
+            else:
+                timing = f"every {ms // 1000}s"
+        else:
+            timing = kind
+
         next_run = ""
-        if j.next_run_at:
-            import datetime
-            dt = datetime.datetime.fromtimestamp(j.next_run_at / 1000)
+        if j.state.next_run_at_ms:
+            dt = datetime.fromtimestamp(j.state.next_run_at_ms / 1000)
             next_run = f" next at {dt.strftime('%H:%M:%S')}"
-        schedule_type = j.schedule.kind
-        lines.append(f"  {j.id} ({schedule_type}): {j.prompt[:60]}{next_run}")
-    return "\n".join(["Active cron jobs:"] + lines)
+
+        lines.append(f"  {j.id} ({timing}): {j.name}{next_run}")
+
+    return "\n".join(["Scheduled jobs:"] + lines)
 
 
 @tool(args_schema=RemoveCronInput)
-def remove_cron(job_id: str) -> str:
+def remove_cron(action: str = "remove", job_id: str = "") -> str:
     """Remove a scheduled cron job by its ID."""
     if _cron_service is None:
         return "Error: cron service not available"
 
-    if _cron_service.remove_job(job_id):
-        return f"Cron job {job_id} removed."
-    return f"Job {job_id} not found."
+    if not job_id:
+        return "Error: job_id is required"
+
+    result = _cron_service.remove_job(job_id)
+    if result == "removed":
+        return f"Removed job {job_id}"
+    return f"Job {job_id} not found"
