@@ -15,6 +15,7 @@ _channel: ContextVar[str] = ContextVar("cron_channel", default="")
 _chat_id: ContextVar[str] = ContextVar("cron_chat_id", default="")
 _session_key: ContextVar[str] = ContextVar("cron_session_key", default="")
 _metadata: ContextVar[dict] = ContextVar("cron_metadata", default={})
+_in_cron_context: ContextVar[bool] = ContextVar("cron_in_context", default=False)
 
 
 def set_cron_service(service: CronService) -> None:
@@ -27,6 +28,15 @@ def set_context(channel: str, chat_id: str, session_key: str = "", metadata: dic
     _chat_id.set(chat_id)
     _session_key.set(session_key or f"{channel}:{chat_id}")
     _metadata.set(metadata or {})
+
+
+def enter_cron_context() -> object:
+    """Mark that we're inside a cron callback. Returns a token for reset."""
+    return _in_cron_context.set(True)
+
+
+def leave_cron_context(token: object) -> None:
+    _in_cron_context.reset(token)
 
 
 class AddCronInput(BaseModel):
@@ -76,6 +86,13 @@ async def add_cron(
     """
     if _cron_service is None:
         return "Error: cron service not available"
+
+    if _in_cron_context.get():
+        return (
+            "Error: cannot create new cron jobs from within a cron job execution. "
+            "Just respond with the current time or the message the user asked for. "
+            "Do NOT call add_cron again."
+        )
 
     if not message.strip():
         return "Error: 'message' is required (what should the agent do when the job triggers?)"

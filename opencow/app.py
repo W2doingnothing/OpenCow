@@ -417,7 +417,13 @@ class OpenCow:
 
         # Use a dedicated session so cron interactions don't corrupt user history
         cron_session_key = f"cron:{job.id}"
-        result = await self.run(message, session_key=cron_session_key, channel=channel)
+
+        # Block cron-triggered LLM from creating new cron jobs (prevents feedback loop)
+        token = cron_tools.enter_cron_context()
+        try:
+            result = await self.run(message, session_key=cron_session_key, channel=channel)
+        finally:
+            cron_tools.leave_cron_context(token)
 
         if result and job.payload.deliver:
             # Set context so nested cron calls within execute would work correctly
