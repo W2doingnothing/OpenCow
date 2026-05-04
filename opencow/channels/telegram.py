@@ -150,8 +150,8 @@ class TelegramChannel(BaseChannel):
                 message_id=message_id,
                 reaction=[ReactionTypeEmoji(emoji=emoji)],
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Telegram reaction failed: {}", e)
 
     async def stop(self) -> None:
         self._running = False
