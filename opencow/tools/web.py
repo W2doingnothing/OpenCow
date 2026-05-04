@@ -31,47 +31,72 @@ def web_search(query: str) -> str:
     """Search the web. Use for finding current information, docs, or answers online."""
     api_key = _web_search_api_key or os.environ.get("TAVILY_API_KEY")
 
-    # Use DuckDuckGo (free, no API key) as default — matches nanobot behavior
+    # Primary: DuckDuckGo (free, no API key, ~1-2s)
+    ddg_results = _search_ddg(query)
+    if ddg_results is not None:
+        return ddg_results
+
+    # Fallback: Tavily (requires API key, ~0.5-1s)
+    if api_key:
+        tavily_results = _search_tavily(query, api_key)
+        if tavily_results is not None:
+            return tavily_results
+
+    return (
+        "Error: web search unavailable. Install duckduckgo-search "
+        "(pip install duckduckgo-search) or set a Tavily API key in config."
+    )
+
+
+def _search_ddg(query: str) -> str | None:
+    """Try DuckDuckGo search, return formatted results or None on failure."""
+    DDGS = None
     try:
-        from duckduckgo_search import DDGS
-        results = list(DDGS().text(query, max_results=5))
-        if not results:
-            return f"No results found for: {query}"
-        lines = []
-        for i, r in enumerate(results[:5], 1):
-            title = r.get("title", "Untitled")
-            url = r.get("href", "")
-            snippet = r.get("body", "").strip()
-            lines.append(f"{i}. {title}\n   {url}\n   {snippet}")
-        return "\n\n".join(lines)
+        from ddgs import DDGS  # v9.x (preferred)
     except ImportError:
-        pass  # Fall through to Tavily
+        try:
+            from duckduckgo_search import DDGS  # v8.x (legacy)
+        except ImportError:
+            return None
+
+    try:
+        with DDGS() as ddgs:
+            raw = list(ddgs.text(query, max_results=5))
     except Exception as e:
-        logger.debug("DuckDuckGo search failed: {}, trying Tavily...", e)
+        logger.debug("DuckDuckGo search failed: {}", e)
+        return None
 
-    # Fallback: Tavily (requires API key)
-    if not api_key:
-        return (
-            "Error: web search requires either duckduckgo-search package "
-            "(pip install duckduckgo-search) or a Tavily API key in config."
-        )
+    if not raw:
+        return f"No results found for: {query}"
 
+    lines = []
+    for i, r in enumerate(raw[:5], 1):
+        title = r.get("title", "Untitled")
+        url = r.get("href", "")
+        snippet = r.get("body", "").strip()
+        lines.append(f"{i}. {title}\n   {url}\n   {snippet}")
+    return "\n\n".join(lines)
+
+
+def _search_tavily(query: str, api_key: str) -> str | None:
+    """Try Tavily search, return formatted results or None on failure."""
     try:
         from tavily import TavilyClient
         client = TavilyClient(api_key=api_key)
         response = client.search(query, max_results=5)
-        results = response.get("results", [])
-        if not results:
+        raw = response.get("results", [])
+        if not raw:
             return f"No results found for: {query}"
         lines = []
-        for i, r in enumerate(results[:5], 1):
+        for i, r in enumerate(raw[:5], 1):
             title = r.get("title", "Untitled")
             url = r.get("url", "")
             snippet = r.get("content", "").strip()
             lines.append(f"{i}. {title}\n   {url}\n   {snippet}")
         return "\n\n".join(lines)
     except Exception as e:
-        return f"Search error: {e}"
+        logger.debug("Tavily search failed: {}", e)
+        return None
 
 
 @tool(args_schema=WebFetchInput)
