@@ -84,21 +84,29 @@ class ToolsConfig(Base):
     max_file_read_chars: int = Field(default=50000, description="Truncate file reads beyond this")
 
 
-class ChannelItem(Base):
-    """Per-channel configuration."""
+class FeishuConfig(Base):
+    """Feishu/Lark channel config."""
     enabled: bool = False
-    # Bot token or app credentials — see opencow init output for details
-    token: str = ""
     app_id: str = ""
     app_secret: str = ""
+    domain: str = "feishu"  # "feishu" or "lark"
+    send_progress: bool = True
+
+
+class QQConfig(Base):
+    """QQ channel config (napcat/LLOneBot)."""
+    enabled: bool = False
+    ws_url: str = "ws://localhost:3001"
+    http_url: str = "http://localhost:3000"
+    access_token: str = ""
     send_progress: bool = True
 
 
 class ChannelsConfig(Base):
-    """Channel configurations. Flip enabled=true to activate."""
+    """Channel configurations. Set enabled=true to activate."""
     model_config = ConfigDict(extra="allow")
-    feishu: ChannelItem = Field(default_factory=ChannelItem)
-    qq: ChannelItem = Field(default_factory=ChannelItem)
+    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
+    qq: QQConfig = Field(default_factory=QQConfig)
 
 
 class ApiConfig(Base):

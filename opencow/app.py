@@ -211,6 +211,32 @@ class OpenCow:
 
         autocompact_task = asyncio.create_task(_autocompact_loop())
 
+        # Start enabled channels from config
+        channel_tasks: list[asyncio.Task] = []
+        if self.config.channels.feishu.enabled:
+            from opencow.channels.feishu import FeishuChannel
+            feishu_cfg = self.config.channels.feishu
+            feishu = FeishuChannel(
+                bus=self.bus,
+                app_id=feishu_cfg.app_id,
+                app_secret=feishu_cfg.app_secret,
+                domain=feishu_cfg.domain,
+            )
+            channel_tasks.append(asyncio.create_task(feishu.listen()))
+            logger.info("Feishu channel started")
+
+        if self.config.channels.qq.enabled:
+            from opencow.channels.qq import QQChannel
+            qq_cfg = self.config.channels.qq
+            qq = QQChannel(
+                bus=self.bus,
+                ws_url=qq_cfg.ws_url,
+                http_url=qq_cfg.http_url,
+                access_token=qq_cfg.access_token,
+            )
+            channel_tasks.append(asyncio.create_task(qq.listen()))
+            logger.info("QQ channel started")
+
         cli = CliChannel(bus=self.bus)
         listen_task = asyncio.create_task(cli.listen())
 
@@ -292,7 +318,7 @@ class OpenCow:
             self._running = False
             await cli.stop()
             listen_task.cancel()
-            for t in [listen_task, cron_task, heartbeat_task, autocompact_task]:
+            for t in [listen_task, cron_task, heartbeat_task, autocompact_task] + channel_tasks:
                 t.cancel()
                 try:
                     await t
