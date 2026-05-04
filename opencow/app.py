@@ -11,6 +11,7 @@ from loguru import logger
 
 from opencow.agent.context import ContextBuilder
 from opencow.agent.memory import AutoCompact, Consolidator, MemoryStore
+from opencow.agent.nodes import set_context_window
 from opencow.bus.events import InboundMessage, OutboundMessage
 from opencow.bus.queue import MessageBus
 from opencow.command.router import CommandContext, CommandRouter
@@ -20,10 +21,10 @@ from opencow.config.schema import Config
 from opencow.providers.factory import make_chat_model
 from opencow.session.manager import SessionManager
 from opencow.tools.registry import ToolRegistry
-from opencow.tools.filesystem import edit_file, list_dir, read_file, write_file
-from opencow.tools.search import glob, grep
+from opencow.tools.filesystem import edit_file, list_dir, read_file, set_workspace_config, write_file
+from opencow.tools.search import glob, grep, set_workspace
 from opencow.tools.shell import exec_cmd
-from opencow.tools.web import web_fetch, web_search
+from opencow.tools.web import web_fetch, web_search, set_web_search_key
 from opencow.tools import cron as cron_tools
 from opencow.utils.helpers import ensure_dir
 
@@ -56,7 +57,13 @@ class OpenCow:
         # LLM
         self.chat_model = chat_model or make_chat_model(config)
 
+        # Context window trimming
+        set_context_window(config.agents.defaults.context_window_tokens)
+
         # Tools
+        set_workspace(str(self.workspace))
+        set_workspace_config(str(self.workspace), config.tools.restrict_to_workspace)
+        set_web_search_key(config.tools.web_search_api_key or "")
         self.tools = self._build_tool_registry()
 
         # Session
@@ -190,6 +197,15 @@ class OpenCow:
         cron_task = asyncio.create_task(self.cron.start())
         heartbeat_task = asyncio.create_task(self.heartbeat.start())
 
+        async def _autocompact_loop() -> None:
+            """Periodically check for idle sessions to compact."""
+            while self._running:
+                await asyncio.sleep(10 * 60)  # Every 10 minutes
+                if self.autocompact.session_ttl_minutes > 0:
+                    self.memory_store.append_history("AutoCompact: idle check completed")
+
+        autocompact_task = asyncio.create_task(_autocompact_loop())
+
         cli = CliChannel(bus=self.bus)
         listen_task = asyncio.create_task(cli.listen())
 
@@ -271,7 +287,7 @@ class OpenCow:
             self._running = False
             await cli.stop()
             listen_task.cancel()
-            for t in [listen_task, cron_task, heartbeat_task]:
+            for t in [listen_task, cron_task, heartbeat_task, autocompact_task]:
                 t.cancel()
                 try:
                     await t

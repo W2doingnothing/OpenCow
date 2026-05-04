@@ -6,6 +6,23 @@ from typing import Any
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+# Global config, set by OpenCow
+_restrict_to_workspace: bool = True
+_workspace_root: Path = Path(".")
+
+
+def set_workspace_config(workspace: str, restrict: bool) -> None:
+    global _workspace_root, _restrict_to_workspace
+    _workspace_root = Path(workspace).expanduser().resolve()
+    _restrict_to_workspace = restrict
+
+
+def _resolve_path(path_str: str) -> Path:
+    p = Path(path_str).expanduser().resolve()
+    if _restrict_to_workspace and not str(p).startswith(str(_workspace_root)):
+        raise PermissionError(f"Access denied: {path_str} is outside workspace {_workspace_root}")
+    return p
+
 
 class ReadFileInput(BaseModel):
     file_path: str = Field(description="The path to the file to read")
@@ -29,7 +46,7 @@ class ListDirInput(BaseModel):
 @tool(args_schema=ReadFileInput)
 def read_file(file_path: str) -> str:
     """Read a file from the filesystem. Use this to inspect file contents."""
-    p = Path(file_path).expanduser().resolve()
+    p = _resolve_path(file_path)
     if not p.exists():
         return f"Error: file not found: {file_path}"
     if p.is_dir():
@@ -43,7 +60,7 @@ def read_file(file_path: str) -> str:
 @tool(args_schema=WriteFileInput)
 def write_file(file_path: str, content: str) -> str:
     """Write content to a file. Creates or overwrites the file."""
-    p = Path(file_path).expanduser().resolve()
+    p = _resolve_path(file_path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     return f"Successfully wrote {len(content)} chars to {file_path}"
@@ -52,7 +69,7 @@ def write_file(file_path: str, content: str) -> str:
 @tool(args_schema=EditFileInput)
 def edit_file(file_path: str, old_string: str, new_string: str) -> str:
     """Make an exact string replacement in an existing file."""
-    p = Path(file_path).expanduser().resolve()
+    p = _resolve_path(file_path)
     if not p.exists():
         return f"Error: file not found: {file_path}"
     content = p.read_text(encoding="utf-8")
@@ -74,7 +91,7 @@ def edit_file(file_path: str, old_string: str, new_string: str) -> str:
 @tool(args_schema=ListDirInput)
 def list_dir(path: str = ".") -> str:
     """List the contents of a directory."""
-    p = Path(path).expanduser().resolve()
+    p = _resolve_path(path)
     if not p.exists():
         return f"Error: directory not found: {path}"
     if not p.is_dir():

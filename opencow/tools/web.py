@@ -7,6 +7,14 @@ import httpx
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+# Global API key, set by OpenCow from config
+_web_search_api_key: str = ""
+
+
+def set_web_search_key(key: str) -> None:
+    global _web_search_api_key
+    _web_search_api_key = key
+
 
 class WebSearchInput(BaseModel):
     query: str = Field(description="The search query")
@@ -20,16 +28,10 @@ class WebFetchInput(BaseModel):
 @tool(args_schema=WebSearchInput)
 def web_search(query: str) -> str:
     """Search the web. Use for finding current information, docs, or answers online."""
-    api_key = os.environ.get("TAVILY_API_KEY")
+    api_key = _web_search_api_key or os.environ.get("TAVILY_API_KEY")
     if not api_key:
-        return "Error: TAVILY_API_KEY env var not set. Cannot perform web search."
+        return "Error: no Tavily API key configured. Set tools.webSearchApiKey in config.json or TAVILY_API_KEY env var."
 
-    try:
-        import asyncio as _asyncio
-    except ImportError:
-        return "Error: asyncio not available"
-
-    # Use tavily synchronously for simplicity
     try:
         from tavily import TavilyClient
         client = TavilyClient(api_key=api_key)

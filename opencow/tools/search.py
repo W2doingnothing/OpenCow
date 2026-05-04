@@ -6,6 +6,14 @@ from pathlib import Path
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+# Global workspace root, set by OpenCow
+_workspace: Path = Path(".")
+
+
+def set_workspace(path: str) -> None:
+    global _workspace
+    _workspace = Path(path).expanduser().resolve()
+
 
 class GrepInput(BaseModel):
     pattern: str = Field(description="The regex pattern to search for (ripgrep syntax)")
@@ -19,11 +27,13 @@ class GlobInput(BaseModel):
 @tool(args_schema=GrepInput)
 def grep(pattern: str, path: str = ".") -> str:
     """Search file contents using ripgrep. Use regex patterns to find text in files."""
-    p = Path(path).expanduser().resolve()
+    p = _workspace / path if not Path(path).is_absolute() else Path(path)
+    p = p.expanduser().resolve()
     try:
         result = subprocess.run(
             ["rg", "--no-heading", "-n", "--color=never", pattern, str(p)],
-            capture_output=True, text=True, timeout=30, encoding="utf-8",
+            capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
         )
         output = result.stdout.strip()
         if not output:
@@ -41,7 +51,7 @@ def grep(pattern: str, path: str = ".") -> str:
 @tool(args_schema=GlobInput)
 def glob(pattern: str) -> str:
     """Find files matching a glob pattern. Use for fuzzy file search."""
-    matches = sorted(Path(".").glob(pattern))
+    matches = sorted(_workspace.glob(pattern))
     if not matches:
         return f"No files matched pattern: {pattern}"
     lines = [f"  {m}" for m in matches[:50]]

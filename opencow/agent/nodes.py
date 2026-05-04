@@ -3,12 +3,18 @@
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, trim_messages
 from langgraph.prebuilt import ToolNode
 
 from opencow.agent.state import AgentState
 
 _MAX_EMPTY_RETRIES = 2
+_CONTEXT_WINDOW_TOKENS = 65536
+
+
+def set_context_window(tokens: int) -> None:
+    global _CONTEXT_WINDOW_TOKENS
+    _CONTEXT_WINDOW_TOKENS = tokens
 
 
 def _sanitize_messages(messages: list[Any]) -> list[Any]:
@@ -78,6 +84,23 @@ def make_call_model_node(chat_model: BaseChatModel, tools: list[Any]):
 
     async def call_model(state: AgentState) -> dict[str, Any]:
         messages = _sanitize_messages(list(state["messages"]))
+
+        # Trim to stay within context window (keep system message + recent messages)
+        if len(messages) > 4:  # Only trim if there's enough history to matter
+            try:
+                messages = trim_messages(
+                    messages,
+                    max_tokens=_CONTEXT_WINDOW_TOKENS,
+                    token_counter=chat_model.get_num_tokens_from_messages
+                    if hasattr(chat_model, "get_num_tokens_from_messages")
+                    else len,
+                    strategy="last",
+                    start_on="human",
+                    include_system=True,
+                )
+            except Exception:
+                pass  # Never let trimming break the call
+
         iteration = state.get("iteration_count", 0)
         empty_count = state.get("empty_response_count", 0)
 
