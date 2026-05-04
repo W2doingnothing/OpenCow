@@ -94,6 +94,15 @@ class FeishuConfig(Base):
     send_progress: bool = True
 
 
+class TelegramConfig(Base):
+    """Telegram channel config."""
+    enabled: bool = False
+    token: str = ""
+    allow_from: list[str] = Field(default_factory=list)
+    group_policy: Literal["open", "mention"] = "mention"
+    send_progress: bool = True
+
+
 class QQConfig(Base):
     """QQ channel config (official botpy SDK)."""
     enabled: bool = False
@@ -109,6 +118,7 @@ class ChannelsConfig(Base):
     """Channel configurations. Set enabled=true to activate."""
     model_config = ConfigDict(extra="allow")
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     qq: QQConfig = Field(default_factory=QQConfig)
 
 

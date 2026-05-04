@@ -214,6 +214,7 @@ class OpenCow:
         # Start enabled channels from config
         channel_tasks: list[asyncio.Task] = []
         feishu_channel = None
+        tg = None
         qq = None
 
         if self.config.channels.feishu.enabled:
@@ -228,6 +229,18 @@ class OpenCow:
             )
             channel_tasks.append(asyncio.create_task(feishu_channel.listen()))
             logger.info("Feishu channel started")
+
+        if self.config.channels.telegram.enabled:
+            from opencow.channels.telegram import TelegramChannel
+            tg_cfg = self.config.channels.telegram
+            tg = TelegramChannel(
+                bus=self.bus,
+                token=tg_cfg.token,
+                allow_from=tg_cfg.allow_from,
+                group_policy=tg_cfg.group_policy,
+            )
+            channel_tasks.append(asyncio.create_task(tg.listen()))
+            logger.info("Telegram channel started")
 
         if self.config.channels.qq.enabled:
             from opencow.channels.qq import QQChannel
@@ -253,6 +266,8 @@ class OpenCow:
         _channels = {"cli": cli}
         if feishu_channel is not None:
             _channels["feishu"] = feishu_channel
+        if tg is not None:
+            _channels["telegram"] = tg
         if qq is not None:
             _channels["qq"] = qq
 
@@ -340,7 +355,7 @@ class OpenCow:
             await cli.stop()
             listen_task.cancel()
             # Close channel clients BEFORE event loop shuts down (prevents botpy __del__ errors)
-            for ch in [feishu_channel, qq]:
+            for ch in [feishu_channel, tg, qq]:
                 if ch is not None:
                     try:
                         await ch.stop()
