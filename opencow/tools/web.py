@@ -10,6 +10,8 @@ from langchain_core.tools import tool
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from opencow.security.network import validate_url_target
+
 # Global API key, set by OpenCow from config
 _web_search_api_key: str = ""
 
@@ -124,9 +126,10 @@ def web_search(query: str) -> str:
 def web_fetch(url: str, prompt: str = "Extract the main content from this page") -> str:
     """Fetch and extract content from a web page."""
     url = url.strip(' \t\r\n`"\'')
-    # Quick URL validation
-    if not url.startswith(("http://", "https://")):
-        return f"Error: only http/https URLs allowed, got: {url[:50]}"
+    # SSRF protection
+    ok, err = validate_url_target(url)
+    if not ok:
+        return f"Error: URL blocked: {err}"
 
     try:
         with httpx.Client(

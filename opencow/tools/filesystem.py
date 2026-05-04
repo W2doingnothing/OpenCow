@@ -6,6 +6,8 @@ from typing import Any
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from opencow.utils.document import parse_document
+
 # Global config, set by OpenCow
 _restrict_to_workspace: bool = True
 _workspace_root: Path = Path(".")
@@ -45,12 +47,17 @@ class ListDirInput(BaseModel):
 
 @tool(args_schema=ReadFileInput)
 def read_file(file_path: str) -> str:
-    """Read a file from the filesystem. Use this to inspect file contents."""
+    """Read a file from the filesystem. Supports PDF, DOCX, TXT, and Markdown."""
     p = _resolve_path(file_path)
     if not p.exists():
         return f"Error: file not found: {file_path}"
     if p.is_dir():
         return f"Error: {file_path} is a directory, use list_dir instead"
+
+    # Use document parser for PDF/DOCX
+    if p.suffix.lower() in (".pdf", ".docx", ".doc"):
+        return parse_document(str(p))
+
     try:
         return p.read_text(encoding="utf-8")
     except UnicodeDecodeError:

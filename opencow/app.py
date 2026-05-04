@@ -118,6 +118,10 @@ class OpenCow:
         )
         cron_tools.set_cron_service(self.cron)
 
+        # MCP tools (Phase 4)
+        if config.mcp_servers:
+            asyncio.get_event_loop().create_task(self._load_mcp_tools())
+
         # Heartbeat (Phase 2)
         from opencow.heartbeat.service import HeartbeatService
         self.heartbeat = HeartbeatService(
@@ -167,6 +171,16 @@ class OpenCow:
         cron_tools.set_context(channel=channel, chat_id=chat_id, session_key=session_key)
         result = await self._process_message(msg)
         return result.content if result else ""
+
+    async def _load_mcp_tools(self) -> None:
+        """Load MCP tools from config and register them."""
+        from opencow.tools.mcp import load_mcp_tools
+
+        tools = await load_mcp_tools(self.config.mcp_servers)
+        for t in tools:
+            self.tools.register(t)
+        if tools:
+            logger.info("Loaded {} MCP tools", len(tools))
 
     def forget_session(self, session_key: str) -> None:
         """Clear session priming so the next message re-injects a fresh system prompt."""
