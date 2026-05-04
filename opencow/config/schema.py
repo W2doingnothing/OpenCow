@@ -100,6 +100,7 @@ class TelegramConfig(Base):
     token: str = ""
     allow_from: list[str] = Field(default_factory=list)
     group_policy: Literal["open", "mention"] = "mention"
+    react_emoji: str = "👀"
     send_progress: bool = True
 
 

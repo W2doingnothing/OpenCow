@@ -32,6 +32,7 @@ class TelegramChannel(BaseChannel):
         self._token: str = str(kwargs.get("token", ""))
         self._allow_from: list[str] = kwargs.get("allow_from", []) or []
         self._group_policy: str = str(kwargs.get("group_policy", "mention"))
+        self._react_emoji: str = str(kwargs.get("react_emoji", "👀"))
         self._app: Any = None
 
     async def listen(self) -> None:
@@ -102,6 +103,9 @@ class TelegramChannel(BaseChannel):
 
             logger.debug("Telegram inbound ({}): {} from {}", "group" if is_group else "private", text[:60], user_id)
 
+            # Add reaction emoji to show "seen" (best-effort, non-blocking)
+            await self._add_reaction(chat_id, message.message_id, self._react_emoji)
+
             msg = InboundMessage(
                 text=text,
                 channel=self.name,
@@ -126,6 +130,19 @@ class TelegramChannel(BaseChannel):
             )
         except Exception:
             logger.exception("Telegram: send failed")
+
+    async def _add_reaction(self, chat_id: str, message_id: int, emoji: str) -> None:
+        """Add emoji reaction to a message (best-effort, non-blocking)."""
+        if not self._app or not emoji:
+            return
+        try:
+            await self._app.bot.set_message_reaction(
+                chat_id=int(chat_id),
+                message_id=message_id,
+                reaction=[{"type": "emoji", "emoji": emoji}],
+            )
+        except Exception:
+            pass
 
     async def stop(self) -> None:
         self._running = False

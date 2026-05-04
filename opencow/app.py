@@ -238,6 +238,7 @@ class OpenCow:
                 token=tg_cfg.token,
                 allow_from=tg_cfg.allow_from,
                 group_policy=tg_cfg.group_policy,
+                react_emoji=tg_cfg.react_emoji,
             )
             channel_tasks.append(asyncio.create_task(tg.listen()))
             logger.info("Telegram channel started")
