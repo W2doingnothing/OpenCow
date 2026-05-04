@@ -213,17 +213,20 @@ class OpenCow:
 
         # Start enabled channels from config
         channel_tasks: list[asyncio.Task] = []
+        feishu_channel = None
+        qq = None
+
         if self.config.channels.feishu.enabled:
             from opencow.channels.feishu import FeishuChannel
             feishu_cfg = self.config.channels.feishu
-            feishu = FeishuChannel(
+            feishu_channel = FeishuChannel(
                 bus=self.bus,
                 app_id=feishu_cfg.app_id,
                 app_secret=feishu_cfg.app_secret,
                 domain=feishu_cfg.domain,
                 allow_from=feishu_cfg.allow_from,
             )
-            channel_tasks.append(asyncio.create_task(feishu.listen()))
+            channel_tasks.append(asyncio.create_task(feishu_channel.listen()))
             logger.info("Feishu channel started")
 
         if self.config.channels.qq.enabled:
@@ -246,14 +249,22 @@ class OpenCow:
         print("OpenCow ready. Type /help for commands, /stop to exit.")
         print()
 
+        # Map channel name → channel instance for outbound routing
+        _channels = {"cli": cli}
+        if feishu_channel is not None:
+            _channels["feishu"] = feishu_channel
+        if qq is not None:
+            _channels["qq"] = qq
+
         async def _next_message() -> InboundMessage:
             """Read inbound messages while also delivering outbound notifications."""
             while True:
                 # Poll: check outbound queue first (non-blocking), then wait for inbound
                 if self.bus.outbound_size > 0:
                     out = await self.bus.consume_outbound()
+                    target = _channels.get(out.channel, cli)
                     try:
-                        await cli.send(out)
+                        await target.send(out)
                     except Exception:
                         pass
                     continue
@@ -305,13 +316,20 @@ class OpenCow:
                 except Exception:
                     pass
 
-                try:
-                    if result and result.content:
-                        await cli.send(result)
+                # Deliver: always show in CLI, also route to channel for non-CLI messages
+                if result and result.content:
+                    if msg.channel == "cli":
+                        try:
+                            await cli.send(result)
+                        except Exception:
+                            print("(display error)", flush=True)
                     else:
-                        print("(no response)", flush=True)
-                except Exception:
-                    print("(display error)", flush=True)
+                        # Publish to outbound bus so the channel's send() delivers it
+                        await self.bus.publish_outbound(result)
+                        # Also echo in CLI for debugging
+                        print(f"\n[{msg.channel}] {result.content[:200]}\n", flush=True)
+                else:
+                    print("(no response)", flush=True)
 
         except asyncio.CancelledError:
             pass
