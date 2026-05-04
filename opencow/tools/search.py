@@ -51,7 +51,20 @@ def grep(pattern: str, path: str = ".") -> str:
 @tool(args_schema=GlobInput)
 def glob(pattern: str) -> str:
     """Find files matching a glob pattern. Use for fuzzy file search."""
-    matches = sorted(_workspace.glob(pattern))
+    # Convert absolute patterns to workspace-relative
+    p = Path(pattern)
+    if p.is_absolute():
+        try:
+            pattern = str(p.relative_to(_workspace))
+        except ValueError:
+            return f"Error: '{pattern}' is outside the workspace ({_workspace}). Use a relative path instead."
+
+    try:
+        matches = sorted(_workspace.glob(pattern))
+    except NotImplementedError:
+        # Fallback: try with Path(pattern).glob() for absolute patterns
+        matches = sorted(Path(pattern).glob("**/*")) if Path(pattern).is_dir() else []
+
     if not matches:
         return f"No files matched pattern: {pattern}"
     lines = [f"  {m}" for m in matches[:50]]
