@@ -339,14 +339,22 @@ class OpenCow:
             self._running = False
             await cli.stop()
             listen_task.cancel()
+            # Cancel all background tasks first
             for t in [listen_task, cron_task, heartbeat_task, autocompact_task] + channel_tasks:
                 t.cancel()
                 try:
                     await t
                 except asyncio.CancelledError:
                     pass
-            await self.cron.stop()
-            await self.heartbeat.stop()
+            # Stop services BEFORE event loop shuts down (prevents __del__ errors)
+            try:
+                await self.cron.stop()
+            except Exception:
+                pass
+            try:
+                await self.heartbeat.stop()
+            except Exception:
+                pass
 
     async def serve_api(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         """Run as an OpenAI-compatible API server."""

@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 from langchain_core.tools import tool
+from loguru import logger
 from pydantic import BaseModel, Field
 
 # Global API key, set by OpenCow from config
@@ -29,8 +30,31 @@ class WebFetchInput(BaseModel):
 def web_search(query: str) -> str:
     """Search the web. Use for finding current information, docs, or answers online."""
     api_key = _web_search_api_key or os.environ.get("TAVILY_API_KEY")
+
+    # Use DuckDuckGo (free, no API key) as default — matches nanobot behavior
+    try:
+        from duckduckgo_search import DDGS
+        results = list(DDGS().text(query, max_results=5))
+        if not results:
+            return f"No results found for: {query}"
+        lines = []
+        for i, r in enumerate(results[:5], 1):
+            title = r.get("title", "Untitled")
+            url = r.get("href", "")
+            snippet = r.get("body", "").strip()
+            lines.append(f"{i}. {title}\n   {url}\n   {snippet}")
+        return "\n\n".join(lines)
+    except ImportError:
+        pass  # Fall through to Tavily
+    except Exception as e:
+        logger.debug("DuckDuckGo search failed: {}, trying Tavily...", e)
+
+    # Fallback: Tavily (requires API key)
     if not api_key:
-        return "Error: no Tavily API key configured. Set tools.webSearchApiKey in config.json or TAVILY_API_KEY env var."
+        return (
+            "Error: web search requires either duckduckgo-search package "
+            "(pip install duckduckgo-search) or a Tavily API key in config."
+        )
 
     try:
         from tavily import TavilyClient
