@@ -8,6 +8,10 @@ A lightweight personal AI agent framework powered by **LangChain** and **LangGra
 
 **v0.1.0**
 
+## Updates
+
+【2026-05-04：OpenCow officially released — welcome to try it out!】
+
 ## Features
 
 ### LLM Providers

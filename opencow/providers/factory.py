@@ -43,6 +43,7 @@ def make_chat_model(config: Config) -> BaseChatModel:
         return ChatOpenAI(
             api_key=provider.api_key or "dummy",
             base_url=api_base or "https://api.deepseek.com",
+            request_timeout=120,
             **kwargs,
         )
 
@@ -52,5 +53,6 @@ def make_chat_model(config: Config) -> BaseChatModel:
     return ChatOpenAI(
         api_key=provider.api_key or "dummy",
         base_url=api_base or None,
+        request_timeout=120,
         **kwargs,
     )

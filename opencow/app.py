@@ -508,7 +508,8 @@ class OpenCow:
             msg_text = f"Request timed out ({_LLM_TIMEOUT_SECONDS}s). Check your API key and network."
             print(f"\n[ERROR] {msg_text}", flush=True)
             logger.error(msg_text)
-            self._reset_corrupted_session(key)
+            # Network timeout is not session corruption — keep history intact so
+            # the user can retry without losing context.
             return OutboundMessage(content=msg_text, channel=msg.channel, chat_id=msg.chat_id, session_key=key)
         except Exception as e:
             if "tool_calls" in str(e) or "400" in str(e):

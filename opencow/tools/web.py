@@ -2,8 +2,13 @@
 
 import os
 import re
+import warnings
 from html import unescape
 from typing import Any
+
+# ddgs v9.x triggers a RuntimeWarning about the old duckduckgo_search package
+# even when imported correctly. Suppress it.
+warnings.filterwarnings("ignore", message=".*duckduckgo_search.*")
 
 import httpx
 from langchain_core.tools import tool
