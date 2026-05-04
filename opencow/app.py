@@ -339,14 +339,23 @@ class OpenCow:
             self._running = False
             await cli.stop()
             listen_task.cancel()
-            # Cancel all background tasks first
+            # Close channel clients BEFORE event loop shuts down (prevents botpy __del__ errors)
+            for ch in [feishu_channel, qq]:
+                if ch is not None:
+                    try:
+                        await ch.stop()
+                    except Exception:
+                        pass
+
+            # Cancel all background tasks
             for t in [listen_task, cron_task, heartbeat_task, autocompact_task] + channel_tasks:
                 t.cancel()
                 try:
                     await t
                 except asyncio.CancelledError:
                     pass
-            # Stop services BEFORE event loop shuts down (prevents __del__ errors)
+
+            # Stop services
             try:
                 await self.cron.stop()
             except Exception:
