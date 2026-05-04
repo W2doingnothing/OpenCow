@@ -221,6 +221,7 @@ class OpenCow:
                 app_id=feishu_cfg.app_id,
                 app_secret=feishu_cfg.app_secret,
                 domain=feishu_cfg.domain,
+                allow_from=feishu_cfg.allow_from,
             )
             channel_tasks.append(asyncio.create_task(feishu.listen()))
             logger.info("Feishu channel started")
@@ -233,6 +234,8 @@ class OpenCow:
                 ws_url=qq_cfg.ws_url,
                 http_url=qq_cfg.http_url,
                 access_token=qq_cfg.access_token,
+                allow_from=qq_cfg.allow_from,
+                ack_message=qq_cfg.ack_message,
             )
             channel_tasks.append(asyncio.create_task(qq.listen()))
             logger.info("QQ channel started")

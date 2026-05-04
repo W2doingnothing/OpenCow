@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import OrderedDict
 from typing import Any
 
 import aiohttp
@@ -23,6 +24,29 @@ from opencow.bus.queue import MessageBus
 from opencow.channels.base import BaseChannel
 
 
+def _extract_text(data: dict) -> str:
+    """Extract plain text from a QQ message."""
+    raw = data.get("raw_message", "") or data.get("message", "")
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, list):
+        parts = []
+        for seg in raw:
+            if isinstance(seg, dict):
+                seg_type = seg.get("type", "")
+                seg_data = seg.get("data", {})
+                if seg_type == "text":
+                    parts.append(seg_data.get("text", ""))
+                elif seg_type == "image":
+                    parts.append("[image]")
+                elif seg_type == "at":
+                    parts.append(f"@{seg_data.get('qq', '?')}")
+                else:
+                    parts.append(f"[{seg_type}]")
+        return " ".join(parts).strip()
+    return ""
+
+
 class QQChannel(BaseChannel):
     """QQ channel using napcat/LLOneBot reverse WebSocket + HTTP API.
 
@@ -30,6 +54,8 @@ class QQChannel(BaseChannel):
         ws_url: WebSocket URL of the bot client (e.g. ws://localhost:3001)
         http_url: HTTP API base URL (e.g. http://localhost:3000)
         access_token: Optional access token for authentication
+        allow_from: Optional list of user IDs to restrict access
+        ack_message: Optional text to send as immediate acknowledgment
     """
 
     name = "qq"
@@ -37,11 +63,14 @@ class QQChannel(BaseChannel):
 
     def __init__(self, bus: MessageBus, **kwargs) -> None:
         super().__init__(bus)
-        self._ws_url: str = kwargs.get("ws_url", "ws://localhost:3001")
-        self._http_url: str = kwargs.get("http_url", "http://localhost:3000")
-        self._access_token: str = kwargs.get("access_token", "")
+        self._ws_url: str = str(kwargs.get("ws_url", "ws://localhost:3001"))
+        self._http_url: str = str(kwargs.get("http_url", "http://localhost:3000"))
+        self._access_token: str = str(kwargs.get("access_token", ""))
+        self._allow_from: list[str] = kwargs.get("allow_from", []) or []
+        self._ack_message: str = str(kwargs.get("ack_message", ""))
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._session: aiohttp.ClientSession | None = None
+        self._processed_ids: OrderedDict[str, None] = OrderedDict()
 
     async def listen(self) -> None:
         """Connect to QQ bot WebSocket and process events."""
@@ -54,9 +83,7 @@ class QQChannel(BaseChannel):
 
         while self._running:
             try:
-                async with self._session.ws_connect(
-                    self._ws_url, headers=headers
-                ) as ws:
+                async with self._session.ws_connect(self._ws_url, headers=headers) as ws:
                     self._ws = ws
                     logger.info("QQ: connected to {}", self._ws_url)
 
@@ -87,50 +114,71 @@ class QQChannel(BaseChannel):
         post_type = data.get("post_type", "")
 
         if post_type == "message":
-            msg_type = data.get("message_type", "private")
-            text = data.get("raw_message", "") or data.get("message", "")
-            if isinstance(text, list):
-                text = " ".join(
-                    t.get("data", {}).get("text", "") if isinstance(t, dict) else str(t)
-                    for t in text
-                )
-
-            if not text.strip():
-                return
-
-            sender_id = str(data.get("sender", {}).get("user_id", "unknown"))
-            message_id = str(data.get("message_id", ""))
-
-            if msg_type == "private":
-                chat_id = f"user_{sender_id}"
-            elif msg_type == "group":
-                group_id = str(data.get("group_id", ""))
-                chat_id = f"group_{group_id}"
-            else:
-                return
-
-            logger.debug("QQ inbound: {} from {}", text[:60], sender_id)
-
-            msg = InboundMessage(
-                text=text,
-                channel=self.name,
-                chat_id=chat_id,
-                message_id=message_id,
-                sender_id=sender_id,
-            )
-            await self.bus.publish_inbound(msg)
-
+            await self._handle_message(data)
         elif post_type == "meta_event":
-            logger.debug("QQ meta event: {}", data.get("meta_event_type", ""))
+            logger.debug("QQ meta: {}", data.get("meta_event_type", ""))
         elif post_type == "notice":
             logger.debug("QQ notice: {}", data.get("notice_type", ""))
+
+    async def _handle_message(self, data: dict) -> None:
+        msg_type = data.get("message_type", "private")
+        message_id = str(data.get("message_id", ""))
+
+        # Dedup
+        if message_id in self._processed_ids:
+            return
+        self._processed_ids[message_id] = None
+        while len(self._processed_ids) > 500:
+            self._processed_ids.popitem(last=False)
+
+        sender_id = str(data.get("sender", {}).get("user_id", "unknown"))
+
+        # Permission check
+        if self._allow_from and sender_id not in self._allow_from:
+            logger.debug("QQ: blocked message from {}", sender_id)
+            return
+
+        # For groups, check @mention
+        if msg_type == "group":
+            group_id = str(data.get("group_id", ""))
+            chat_id = f"group_{group_id}"
+            # Only process if bot was @mentioned
+            raw = data.get("raw_message", "") or data.get("message", "")
+            is_at_bot = False
+            if isinstance(raw, list):
+                for seg in raw:
+                    if isinstance(seg, dict) and seg.get("type") == "at":
+                        is_at_bot = True
+                        break
+            else:
+                is_at_bot = True  # Plain text in group = likely @mention
+            if not is_at_bot:
+                return
+        elif msg_type == "private":
+            chat_id = f"user_{sender_id}"
+        else:
+            return
+
+        text = _extract_text(data)
+        if not text:
+            return
+
+        logger.debug("QQ inbound: {} from {}", text[:60], sender_id)
+
+        msg = InboundMessage(
+            text=text,
+            channel=self.name,
+            chat_id=chat_id,
+            message_id=message_id,
+            sender_id=sender_id,
+        )
+        await self.bus.publish_inbound(msg)
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message to QQ via HTTP API."""
         if not self._session:
             return
 
-        # Determine if this is a private or group chat
         chat_id = msg.chat_id
         if chat_id.startswith("group_"):
             group_id = chat_id[6:]
@@ -151,6 +199,8 @@ class QQChannel(BaseChannel):
             ) as resp:
                 if resp.status != 200:
                     logger.warning("QQ: send failed (HTTP {})", resp.status)
+        except aiohttp.ClientError:
+            raise  # Let ChannelManager retry
         except Exception:
             logger.exception("QQ: send error")
 

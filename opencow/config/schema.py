@@ -90,6 +90,7 @@ class FeishuConfig(Base):
     app_id: str = ""
     app_secret: str = ""
     domain: str = "feishu"  # "feishu" or "lark"
+    allow_from: list[str] = Field(default_factory=list)
     send_progress: bool = True
 
 
@@ -99,6 +100,8 @@ class QQConfig(Base):
     ws_url: str = "ws://localhost:3001"
     http_url: str = "http://localhost:3000"
     access_token: str = ""
+    allow_from: list[str] = Field(default_factory=list)
+    ack_message: str = ""
     send_progress: bool = True
 
 

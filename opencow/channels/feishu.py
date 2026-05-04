@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import json
 import threading
+import time
 from collections import OrderedDict
 from typing import Any
 
@@ -17,13 +18,6 @@ from opencow.channels.base import BaseChannel
 
 FEISHU_AVAILABLE = importlib.util.find_spec("lark_oapi") is not None
 
-MSG_TYPE_MAP = {
-    "image": "[image]",
-    "audio": "[audio]",
-    "file": "[file]",
-    "sticker": "[sticker]",
-}
-
 
 def _parse_feishu_content(content_str: str, msg_type: str) -> str:
     """Parse Feishu message content JSON into plain text."""
@@ -34,18 +28,26 @@ def _parse_feishu_content(content_str: str, msg_type: str) -> str:
         except (json.JSONDecodeError, TypeError):
             return content_str
 
-    if msg_type in MSG_TYPE_MAP:
-        return MSG_TYPE_MAP[msg_type]
-
-    # Try to extract text from other message types
-    try:
-        content = json.loads(content_str)
-        if isinstance(content, dict):
-            text = content.get("text", "") or content.get("title", "")
-            if text:
+    if msg_type == "post":
+        try:
+            content = json.loads(content_str)
+            parts = []
+            for lang_block in (content.get("content", {}) or {}).values():
+                if isinstance(lang_block, list):
+                    for para in lang_block:
+                        if isinstance(para, list):
+                            for seg in para:
+                                if isinstance(seg, dict):
+                                    parts.append(seg.get("text", ""))
+            text = " ".join(parts)
+            if text.strip():
                 return text
-    except (json.JSONDecodeError, TypeError):
-        pass
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+
+    type_map = {"image": "[image]", "audio": "[audio]", "file": "[file]", "sticker": "[sticker]"}
+    if msg_type in type_map:
+        return type_map[msg_type]
 
     return f"[{msg_type}]"
 
@@ -66,21 +68,22 @@ class FeishuChannel(BaseChannel):
 
     def __init__(self, bus: MessageBus, **kwargs) -> None:
         super().__init__(bus)
-        self._app_id: str = kwargs.get("app_id", "")
-        self._app_secret: str = kwargs.get("app_secret", "")
-        self._domain: str = kwargs.get("domain", "feishu")  # "feishu" or "lark"
+        self._app_id: str = str(kwargs.get("app_id", ""))
+        self._app_secret: str = str(kwargs.get("app_secret", ""))
+        self._domain: str = str(kwargs.get("domain", "feishu"))
+        self._allow_from: list[str] = kwargs.get("allow_from", []) or []
         self._client: Any = None
         self._ws_client: Any = None
         self._ws_thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._processed_ids: OrderedDict[str, None] = OrderedDict()
+        self._bot_open_id: str | None = None
 
     async def listen(self) -> None:
-        """Start the Feishu WebSocket connection."""
+        """Start the Feishu WebSocket connection with auto-reconnect."""
         if not FEISHU_AVAILABLE:
             logger.error("Feishu SDK not installed. Run: pip install lark-oapi")
             return
-
         if not self._app_id or not self._app_secret:
             logger.error("Feishu: app_id and app_secret not configured")
             return
@@ -90,9 +93,9 @@ class FeishuChannel(BaseChannel):
 
         self._running = True
         self._loop = asyncio.get_running_loop()
+        domain = LARK_DOMAIN if self._domain == "lark" else FEISHU_DOMAIN
 
         # Create client for sending messages
-        domain = LARK_DOMAIN if self._domain == "lark" else FEISHU_DOMAIN
         self._client = (
             lark.Client.builder()
             .app_id(self._app_id)
@@ -101,11 +104,19 @@ class FeishuChannel(BaseChannel):
             .build()
         )
 
-        # Register event handler and start WebSocket
+        # Fetch bot's own open_id for accurate @mention detection
+        try:
+            resp = self._client.bot.v3.info()
+            if resp and resp.data and resp.data.bot:
+                self._bot_open_id = getattr(resp.data.bot, "open_id", None)
+        except Exception:
+            logger.warning("Feishu: could not fetch bot info")
+
+        # WebSocket event handler
         def _on_event(event_data: Any) -> None:
             self._on_event_sync(event_data)
 
-        event_handler = (
+        self._ws_client = (
             lark.ws.Client.builder()
             .app_id(self._app_id)
             .app_secret(self._app_secret)
@@ -114,32 +125,33 @@ class FeishuChannel(BaseChannel):
             .build()
         )
 
-        self._ws_client = event_handler
-
+        # WebSocket loop in daemon thread with auto-reconnect
         def _ws_loop() -> None:
-            event_handler.start()
+            while self._running:
+                try:
+                    self._ws_client.start()
+                except Exception:
+                    logger.exception("Feishu: WebSocket error, reconnecting in 5s...")
+                if self._running:
+                    time.sleep(5)
 
         self._ws_thread = threading.Thread(target=_ws_loop, daemon=True)
         self._ws_thread.start()
-        logger.info("Feishu: WebSocket started")
+        logger.info("Feishu: WebSocket started (auto-reconnect enabled)")
 
-        # Keep the listen coroutine alive
         while self._running:
             await asyncio.sleep(1)
 
     def _on_event_sync(self, data: Any) -> None:
-        """Sync handler called from WebSocket thread."""
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._on_event(data), self._loop)
 
     async def _on_event(self, data: Any) -> None:
-        """Handle an incoming message event from Feishu."""
         try:
             event = data.event
             message = event.message
             sender = event.sender
 
-            # Dedup
             msg_id = message.message_id
             if msg_id in self._processed_ids:
                 return
@@ -147,7 +159,6 @@ class FeishuChannel(BaseChannel):
             while len(self._processed_ids) > 500:
                 self._processed_ids.popitem(last=False)
 
-            # Skip bot messages
             if sender.sender_type == "bot":
                 return
 
@@ -156,10 +167,26 @@ class FeishuChannel(BaseChannel):
             chat_type = message.chat_type
             msg_type = message.message_type
 
-            # For group messages, only respond when @mentioned
+            # Permission check
+            if self._allow_from and sender_id not in self._allow_from:
+                logger.debug("Feishu: blocked message from {}", sender_id)
+                return
+
+            # Thread-aware session: use root_id for threaded replies
+            root_id = getattr(message, "root_id", None) or ""
+            thread_key = f"{self.name}:{chat_id}"
+            if root_id:
+                thread_key = f"{thread_key}:{root_id}"
+
+            # Group @mention detection
             if chat_type == "group":
                 mentions = getattr(message, "mentions", []) or []
-                if not any(m.name == self.display_name for m in mentions):
+                is_mentioned = any(
+                    m.name == self.display_name
+                    or (self._bot_open_id and getattr(m, "id", {}).get("open_id") == self._bot_open_id)
+                    for m in mentions
+                )
+                if not is_mentioned:
                     return
 
             text = _parse_feishu_content(message.content, msg_type)
@@ -175,13 +202,15 @@ class FeishuChannel(BaseChannel):
                 message_id=msg_id,
                 sender_id=sender_id,
             )
+            # Override session key for thread-aware sessions
+            msg.session_key = thread_key
             await self.bus.publish_inbound(msg)
 
         except Exception:
             logger.exception("Feishu: event handling error")
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message to Feishu."""
+        """Send a text message to Feishu."""
         if not self._client:
             return
 
@@ -202,6 +231,10 @@ class FeishuChannel(BaseChannel):
             self._client.im.v1.message.create(req)
         except Exception:
             logger.exception("Feishu: send failed")
+
+    async def send_delta(self, msg_id: str, delta: str) -> None:
+        """Stream a delta to Feishu (not supported for text messages — no-op)."""
+        pass
 
     async def stop(self) -> None:
         self._running = False

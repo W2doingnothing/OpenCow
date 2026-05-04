@@ -15,6 +15,14 @@ class BaseChannel(ABC):
     def __init__(self, bus: MessageBus, **kwargs) -> None:
         self.bus = bus
         self._running = False
+        # Optional access control list (empty = allow all)
+        self._allow_from: list[str] = kwargs.get("allow_from", []) or []
+
+    def is_allowed(self, sender_id: str) -> bool:
+        """Check if a sender is allowed to interact with this channel."""
+        if not self._allow_from:
+            return True
+        return sender_id in self._allow_from
 
     @abstractmethod
     async def listen(self) -> None:
@@ -24,6 +32,10 @@ class BaseChannel(ABC):
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message to the chat platform."""
         ...
+
+    async def send_delta(self, msg_id: str, delta: str) -> None:
+        """Send a streaming delta (optional, override in subclasses)."""
+        pass
 
     async def stop(self) -> None:
         """Stop the channel."""

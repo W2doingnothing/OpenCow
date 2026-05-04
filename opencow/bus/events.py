@@ -15,10 +15,17 @@ class InboundMessage:
     sender_name: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     media_urls: list[str] = field(default_factory=list)
+    _session_key: str | None = field(default=None, repr=False)
 
     @property
     def session_key(self) -> str:
+        if self._session_key is not None:
+            return self._session_key
         return f"{self.channel}:{self.chat_id}"
+
+    @session_key.setter
+    def session_key(self, value: str) -> None:
+        self._session_key = value
 
 
 @dataclass
