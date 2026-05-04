@@ -32,6 +32,9 @@ def _make_bot_class(channel: QQChannel) -> type:
     intents = botpy.Intents(public_messages=True, direct_message=True)
 
     class _Bot(botpy.Client):
+        def __init__(self) -> None:
+            super().__init__(intents=intents, ext_handlers=False)
+
         async def on_ready(self) -> None:
             logger.info("QQ bot ready: {}", self.robot.name if hasattr(self, "robot") else "?")
 
