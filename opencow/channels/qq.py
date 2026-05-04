@@ -90,11 +90,13 @@ class QQChannel(BaseChannel):
         self._running = True
         self._client = _make_bot_class(self)()
 
+        logger.info("QQ: connecting to bot platform...")
         while self._running:
             try:
                 await self._client.start(appid=self._app_id, secret=self._secret)
+                logger.info("QQ: client.start() returned normally")
             except Exception as e:
-                logger.warning("QQ bot disconnected: {}", e)
+                logger.exception("QQ bot connection error: {}", e)
             if self._running:
                 logger.info("QQ: reconnecting in 5s...")
                 await asyncio.sleep(5)
