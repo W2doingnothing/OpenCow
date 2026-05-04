@@ -6,7 +6,7 @@ A lightweight personal AI agent framework powered by **LangChain** and **LangGra
 
 ## Version
 
-**v0.3.0**
+**v0.1.0**
 
 ## Features
 

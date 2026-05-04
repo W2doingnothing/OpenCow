@@ -1,6 +1,6 @@
 [project]
 name = "opencow"
-version = "0.3.0"
+version = "0.1.0"
 description = "A lightweight personal AI agent framework powered by LangChain and LangGraph"
 requires-python = ">=3.11"
 license = { text = "MIT" }
