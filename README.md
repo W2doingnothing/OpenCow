@@ -87,7 +87,7 @@ Slash commands: `/help` `/status` `/new` `/dream` `/stop`
 | Phase 1 | ✅ Done | Core agent, 9 tools, CLI, config, sessions |
 | Phase 2 | ✅ Done | Memory, Dream, Skills, Cron, Heartbeat, API |
 | Phase 3 | ✅ Done | Telegram & QQ channels, message sanitizer, DuckDuckGo search |
-| Phase 4 | ⬜ Planned | MCP, SSRF, sandbox, multi-agent gateway, docs parsing |
+| Phase 4 | ✅ Done | SSRF, document parsing (PDF/DOCX), MCP protocol |
 
 ## Quick Start
 

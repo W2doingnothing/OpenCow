@@ -82,7 +82,7 @@
 | Phase 1 | ✅ 完成 | 核心 Agent、9 工具、CLI、配置、会话 |
 | Phase 2 | ✅ 完成 | 记忆、Dream、Skills、Cron、Heartbeat、API |
 | Phase 3 | ⬜ 计划 | 飞书 & QQ 渠道、子代理接口 |
-| Phase 4 | ⬜ 计划 | MCP、SSRF、沙箱、多代理网关、文档解析 |
+| Phase 4 | ✅ 完成 | SSRF、文档解析(PDF/DOCX)、MCP 协议 |
 
 ## 快速开始
 
