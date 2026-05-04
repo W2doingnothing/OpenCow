@@ -77,7 +77,7 @@ class AgentsConfig(Base):
 class ToolsConfig(Base):
     """Built-in tool configuration."""
 
-    restrict_to_workspace: bool = Field(default=True, description="Block file access outside workspace")
+    restrict_to_workspace: bool = Field(default=False, description="Block file access outside workspace")
     web_search_api_key: str = Field(default="", description="Tavily API key for web_search tool")
     web_search_provider: str = Field(default="tavily", description="Search backend: tavily")
     exec_timeout_seconds: int = Field(default=120, description="Shell command timeout")
