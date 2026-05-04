@@ -79,13 +79,8 @@ class TelegramChannel(BaseChannel):
     async def _on_telegram_message(self, update: Any, context: Any) -> None:
         """Handle an incoming Telegram message."""
         try:
-            logger.debug("Telegram raw update: {}", update.to_dict() if hasattr(update, 'to_dict') else update)
             message = update.message or update.edited_message
-            if not message:
-                logger.debug("Telegram: no message in update")
-                return
-            if not message.text:
-                logger.debug("Telegram: message has no text (type={})", getattr(message, 'type', '?'))
+            if not message or not message.text:
                 return
 
             chat = message.chat
@@ -94,7 +89,7 @@ class TelegramChannel(BaseChannel):
             user_id = str(user.id) if user else "unknown"
             text = message.text.strip()
             is_group = chat.type in ("group", "supergroup")
-            logger.info("Telegram inbound: chat_id={} user_id={} text={}", chat_id, user_id, text[:60])
+            logger.debug("Telegram inbound: {} from {}", text[:60], user_id)
 
             # Permission check
             if self._allow_from and user_id not in self._allow_from:
@@ -131,7 +126,6 @@ class TelegramChannel(BaseChannel):
             return
         try:
             chat_id = int(msg.chat_id)
-            logger.info("Telegram: sending to chat_id={} text_len={}", chat_id, len(msg.content))
             await self._app.bot.send_message(
                 chat_id=chat_id,
                 text=msg.content,

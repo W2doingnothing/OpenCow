@@ -6,7 +6,7 @@ A lightweight personal AI agent framework powered by **LangChain** and **LangGra
 
 ## Version
 
-**v0.2.1**
+**v0.3.0**
 
 ## Features
 
@@ -58,6 +58,11 @@ A lightweight personal AI agent framework powered by **LangChain** and **LangGra
 - Two-phase: LLM decision → Agent execution
 - Results delivered to CLI via outbound bus
 
+### Channels
+- **Telegram**: long polling, 👀 reaction on receipt, group @mention filtering
+- **QQ**: official botpy SDK, C2C + group @message support
+- **Feishu**: WebSocket long connection (opt-in)
+
 ### API Server
 - `POST /v1/chat/completions` (stream + non-stream)
 - `GET /v1/models`
@@ -81,7 +86,7 @@ Slash commands: `/help` `/status` `/new` `/dream` `/stop`
 |-------|--------|----------|
 | Phase 1 | ✅ Done | Core agent, 9 tools, CLI, config, sessions |
 | Phase 2 | ✅ Done | Memory, Dream, Skills, Cron, Heartbeat, API |
-| Phase 3 | ⬜ Planned | Feishu & QQ channels, subagent interface |
+| Phase 3 | ✅ Done | Telegram & QQ channels, message sanitizer, DuckDuckGo search |
 | Phase 4 | ⬜ Planned | MCP, SSRF, sandbox, multi-agent gateway, docs parsing |
 
 ## Quick Start
