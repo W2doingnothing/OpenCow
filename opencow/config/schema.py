@@ -95,12 +95,12 @@ class FeishuConfig(Base):
 
 
 class QQConfig(Base):
-    """QQ channel config (napcat/LLOneBot)."""
+    """QQ channel config (official botpy SDK)."""
     enabled: bool = False
-    ws_url: str = "ws://localhost:3001"
-    http_url: str = "http://localhost:3000"
-    access_token: str = ""
+    app_id: str = ""
+    secret: str = ""
     allow_from: list[str] = Field(default_factory=list)
+    msg_format: Literal["plain", "markdown"] = "plain"
     ack_message: str = ""
     send_progress: bool = True
 

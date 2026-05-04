@@ -231,10 +231,10 @@ class OpenCow:
             qq_cfg = self.config.channels.qq
             qq = QQChannel(
                 bus=self.bus,
-                ws_url=qq_cfg.ws_url,
-                http_url=qq_cfg.http_url,
-                access_token=qq_cfg.access_token,
+                app_id=qq_cfg.app_id,
+                secret=qq_cfg.secret,
                 allow_from=qq_cfg.allow_from,
+                msg_format=qq_cfg.msg_format,
                 ack_message=qq_cfg.ack_message,
             )
             channel_tasks.append(asyncio.create_task(qq.listen()))

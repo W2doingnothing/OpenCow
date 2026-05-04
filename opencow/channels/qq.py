@@ -1,60 +1,60 @@
-"""QQ channel using napcat / LLOneBot reverse WebSocket protocol.
+"""QQ channel using official botpy SDK.
 
-Connects to a QQ bot client (napcat, LLOneBot, etc.) via WebSocket.
-The bot client forwards QQ messages as JSON events; opencow sends
-responses back via HTTP API.
+Supports:
+- C2C (private) messages via on_c2c_message_create
+- Group @mentions via on_group_at_message_create
+- Plain text and markdown output
+- Auto-reconnect on disconnect
 
-Requires a running QQ bot client:
-- napcat: https://github.com/NapNeko/NapCatQQ
-- LLOneBot: https://github.com/LLOneBot/LLOneBot
+Requires: pip install qq-botpy
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-from collections import OrderedDict
+import importlib.util
+from collections import deque
 from typing import Any
 
-import aiohttp
 from loguru import logger
 
 from opencow.bus.events import InboundMessage, OutboundMessage
 from opencow.bus.queue import MessageBus
 from opencow.channels.base import BaseChannel
 
+QQ_AVAILABLE = importlib.util.find_spec("botpy") is not None
 
-def _extract_text(data: dict) -> str:
-    """Extract plain text from a QQ message."""
-    raw = data.get("raw_message", "") or data.get("message", "")
-    if isinstance(raw, str):
-        return raw.strip()
-    if isinstance(raw, list):
-        parts = []
-        for seg in raw:
-            if isinstance(seg, dict):
-                seg_type = seg.get("type", "")
-                seg_data = seg.get("data", {})
-                if seg_type == "text":
-                    parts.append(seg_data.get("text", ""))
-                elif seg_type == "image":
-                    parts.append("[image]")
-                elif seg_type == "at":
-                    parts.append(f"@{seg_data.get('qq', '?')}")
-                else:
-                    parts.append(f"[{seg_type}]")
-        return " ".join(parts).strip()
-    return ""
+
+def _make_bot_class(channel: QQChannel) -> type:
+    """Create a botpy Client subclass bound to the given channel."""
+    import botpy
+
+    intents = botpy.Intents(public_messages=True, direct_message=True)
+
+    class _Bot(botpy.Client):
+        async def on_ready(self) -> None:
+            logger.info("QQ bot ready: {}", self.robot.name if hasattr(self, "robot") else "?")
+
+        async def on_c2c_message_create(self, message: Any) -> None:
+            await channel._on_message(message, is_group=False)
+
+        async def on_group_at_message_create(self, message: Any) -> None:
+            await channel._on_message(message, is_group=True)
+
+        async def on_direct_message_create(self, message: Any) -> None:
+            await channel._on_message(message, is_group=False)
+
+    return _Bot
 
 
 class QQChannel(BaseChannel):
-    """QQ channel using napcat/LLOneBot reverse WebSocket + HTTP API.
+    """QQ channel using official botpy SDK.
 
     Config fields:
-        ws_url: WebSocket URL of the bot client (e.g. ws://localhost:3001)
-        http_url: HTTP API base URL (e.g. http://localhost:3000)
-        access_token: Optional access token for authentication
+        app_id: QQ bot App ID
+        secret: QQ bot App Secret
         allow_from: Optional list of user IDs to restrict access
+        msg_format: "plain" or "markdown"
         ack_message: Optional text to send as immediate acknowledgment
     """
 
@@ -63,150 +63,136 @@ class QQChannel(BaseChannel):
 
     def __init__(self, bus: MessageBus, **kwargs) -> None:
         super().__init__(bus)
-        self._ws_url: str = str(kwargs.get("ws_url", "ws://localhost:3001"))
-        self._http_url: str = str(kwargs.get("http_url", "http://localhost:3000"))
-        self._access_token: str = str(kwargs.get("access_token", ""))
+        self._app_id: str = str(kwargs.get("app_id", ""))
+        self._secret: str = str(kwargs.get("secret", ""))
         self._allow_from: list[str] = kwargs.get("allow_from", []) or []
+        self._msg_format: str = str(kwargs.get("msg_format", "plain"))
         self._ack_message: str = str(kwargs.get("ack_message", ""))
-        self._ws: aiohttp.ClientWebSocketResponse | None = None
-        self._session: aiohttp.ClientSession | None = None
-        self._processed_ids: OrderedDict[str, None] = OrderedDict()
+        self._client: Any = None
+        self._processed_ids: deque[str] = deque(maxlen=1000)
+        self._msg_seq: int = 1
+        self._chat_type_cache: dict[str, str] = {}
 
     async def listen(self) -> None:
-        """Connect to QQ bot WebSocket and process events."""
-        self._running = True
-        headers = {}
-        if self._access_token:
-            headers["Authorization"] = f"Bearer {self._access_token}"
+        """Start the QQ bot with auto-reconnect."""
+        if not QQ_AVAILABLE:
+            logger.error("QQ SDK not installed. Run: pip install qq-botpy")
+            return
+        if not self._app_id or not self._secret:
+            logger.error("QQ: app_id and secret not configured")
+            return
 
-        self._session = aiohttp.ClientSession()
+        import botpy
+
+        self._running = True
+        self._client = _make_bot_class(self)()
 
         while self._running:
             try:
-                async with self._session.ws_connect(self._ws_url, headers=headers) as ws:
-                    self._ws = ws
-                    logger.info("QQ: connected to {}", self._ws_url)
-
-                    async for raw in ws:
-                        if not self._running:
-                            break
-                        try:
-                            data = json.loads(raw.data)
-                            await self._handle_event(data)
-                        except json.JSONDecodeError:
-                            continue
-                        except Exception:
-                            logger.exception("QQ: event handling error")
-
-            except aiohttp.ClientError as e:
-                logger.warning("QQ: connection lost ({}) retrying in 5s...", e)
-            except Exception:
-                logger.exception("QQ: unexpected error, retrying in 5s...")
-
+                await self._client.start(appid=self._app_id, secret=self._secret)
+            except Exception as e:
+                logger.warning("QQ bot disconnected: {}", e)
             if self._running:
+                logger.info("QQ: reconnecting in 5s...")
                 await asyncio.sleep(5)
 
-        if self._session:
-            await self._session.close()
-
-    async def _handle_event(self, data: dict) -> None:
-        """Process a QQ event."""
-        post_type = data.get("post_type", "")
-
-        if post_type == "message":
-            await self._handle_message(data)
-        elif post_type == "meta_event":
-            logger.debug("QQ meta: {}", data.get("meta_event_type", ""))
-        elif post_type == "notice":
-            logger.debug("QQ notice: {}", data.get("notice_type", ""))
-
-    async def _handle_message(self, data: dict) -> None:
-        msg_type = data.get("message_type", "private")
-        message_id = str(data.get("message_id", ""))
-
-        # Dedup
-        if message_id in self._processed_ids:
-            return
-        self._processed_ids[message_id] = None
-        while len(self._processed_ids) > 500:
-            self._processed_ids.popitem(last=False)
-
-        sender_id = str(data.get("sender", {}).get("user_id", "unknown"))
-
-        # Permission check
-        if self._allow_from and sender_id not in self._allow_from:
-            logger.debug("QQ: blocked message from {}", sender_id)
-            return
-
-        # For groups, check @mention
-        if msg_type == "group":
-            group_id = str(data.get("group_id", ""))
-            chat_id = f"group_{group_id}"
-            # Only process if bot was @mentioned
-            raw = data.get("raw_message", "") or data.get("message", "")
-            is_at_bot = False
-            if isinstance(raw, list):
-                for seg in raw:
-                    if isinstance(seg, dict) and seg.get("type") == "at":
-                        is_at_bot = True
-                        break
-            else:
-                is_at_bot = True  # Plain text in group = likely @mention
-            if not is_at_bot:
+    async def _on_message(self, data: Any, is_group: bool = False) -> None:
+        """Handle an incoming QQ message."""
+        try:
+            msg_id = getattr(data, "id", "") or ""
+            if msg_id in self._processed_ids:
                 return
-        elif msg_type == "private":
-            chat_id = f"user_{sender_id}"
-        else:
-            return
+            self._processed_ids.append(msg_id)
 
-        text = _extract_text(data)
-        if not text:
-            return
+            content = (getattr(data, "content", "") or "").strip()
+            if not content:
+                return
 
-        logger.debug("QQ inbound: {} from {}", text[:60], sender_id)
+            # Extract sender + chat identifiers
+            if is_group:
+                chat_id = getattr(data, "group_openid", "")
+                user_id = getattr(data.author, "member_openid", "unknown") if hasattr(data, "author") else "unknown"
+                self._chat_type_cache[chat_id] = "group"
+            else:
+                user_id = str(getattr(data.author, "id", None)
+                              or getattr(data.author, "user_openid", "unknown"))
+                chat_id = user_id
+                self._chat_type_cache[chat_id] = "c2c"
 
-        msg = InboundMessage(
-            text=text,
-            channel=self.name,
-            chat_id=chat_id,
-            message_id=message_id,
-            sender_id=sender_id,
-        )
-        await self.bus.publish_inbound(msg)
+            # Permission check
+            if self._allow_from and "*" not in self._allow_from and user_id not in self._allow_from:
+                logger.debug("QQ: blocked message from {}", user_id)
+                return
+
+            logger.debug("QQ inbound ({}): {} from {}", "group" if is_group else "c2c", content[:60], user_id)
+
+            # Optional ack
+            if self._ack_message:
+                try:
+                    await self._send_text(chat_id, self._ack_message, is_group, msg_id)
+                except Exception:
+                    pass
+
+            msg = InboundMessage(
+                text=content,
+                channel=self.name,
+                chat_id=chat_id,
+                message_id=msg_id,
+                sender_id=user_id,
+            )
+            await self.bus.publish_inbound(msg)
+
+        except Exception:
+            logger.exception("QQ: message handling error for id={}", getattr(data, "id", "?"))
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message to QQ via HTTP API."""
-        if not self._session:
+        """Send a message to QQ."""
+        if not self._client:
+            logger.warning("QQ client not initialized")
             return
 
-        chat_id = msg.chat_id
-        if chat_id.startswith("group_"):
-            group_id = chat_id[6:]
-            endpoint = f"{self._http_url}/send_group_msg"
-            payload = {"group_id": int(group_id), "message": msg.content}
+        chat_type = self._chat_type_cache.get(msg.chat_id, "c2c")
+        is_group = chat_type == "group"
+        message_id = msg.metadata.get("message_id") if msg.metadata else None
+
+        if msg.content and msg.content.strip():
+            await self._send_text(msg.chat_id, msg.content.strip(), is_group, message_id)
+
+    async def _send_text(
+        self,
+        chat_id: str,
+        content: str,
+        is_group: bool,
+        msg_id: str | None = None,
+    ) -> None:
+        """Send a plain text or markdown message via botpy API."""
+        if not self._client:
+            return
+
+        self._msg_seq += 1
+        use_markdown = self._msg_format == "markdown"
+
+        payload: dict[str, Any] = {
+            "msg_type": 2 if use_markdown else 0,
+            "msg_id": msg_id,
+            "msg_seq": self._msg_seq,
+        }
+        if use_markdown:
+            payload["markdown"] = {"content": content}
         else:
-            user_id = chat_id.replace("user_", "")
-            endpoint = f"{self._http_url}/send_private_msg"
-            payload = {"user_id": int(user_id), "message": msg.content}
+            payload["content"] = content
 
-        headers = {}
-        if self._access_token:
-            headers["Authorization"] = f"Bearer {self._access_token}"
-
-        try:
-            async with self._session.post(
-                endpoint, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning("QQ: send failed (HTTP {})", resp.status)
-        except aiohttp.ClientError:
-            raise  # Let ChannelManager retry
-        except Exception:
-            logger.exception("QQ: send error")
+        if is_group:
+            await self._client.api.post_group_message(group_openid=chat_id, **payload)
+        else:
+            await self._client.api.post_c2c_message(openid=chat_id, **payload)
 
     async def stop(self) -> None:
         self._running = False
-        if self._ws:
-            await self._ws.close()
-        if self._session:
-            await self._session.close()
+        if self._client:
+            try:
+                await self._client.close()
+            except Exception:
+                pass
+        self._client = None
+        logger.info("QQ bot stopped")
