@@ -1,6 +1,6 @@
 # OpenCow
 
-基于 **LangChain** 和 **LangGraph** 的轻量级个人 AI Agent 框架。
+运行在你本机的轻量级个人 AI Agent。支持 CLI 对话、QQ/Telegram 接入、定时任务，能读写文件、搜索网络、执行代码。基于 **LangChain** 和 **LangGraph** 构建。
 
 [English](README.md)
 
@@ -29,14 +29,14 @@
 ### 工具（12 个内置）
 | 工具 | 描述 |
 |------|------|
-| `read_file` | 读取文件内容 |
+| `read_file` | 读取文件内容（自动解析 PDF/DOCX） |
 | `write_file` | 创建或覆写文件 |
 | `edit_file` | 精确字符串替换编辑 |
 | `list_dir` | 列出目录内容 |
 | `grep` | ripgrep 正则搜索 |
 | `glob` | 文件模式匹配 |
 | `exec_cmd` | 执行 Shell 命令 |
-| `web_search` | Tavily 网络搜索 |
+| `web_search` | DuckDuckGo（免费）或 Tavily 网络搜索 |
 | `web_fetch` | 网页内容抓取 |
 | `add_cron` | 创建一次性或重复定时任务 |
 | `list_cron` | 列出所有定时任务 |
@@ -62,12 +62,18 @@
 - 两阶段：LLM 判断 → Agent 执行
 - 结果通过出站总线投递到 CLI
 
+### 多渠道接入
+- **Telegram**：长轮询，👀 消息表情回应，群聊 @提及过滤
+- **QQ**：官方 botpy SDK，C2C + 群聊 @消息
+- **飞书**：WebSocket 长连接（可选）
+
 ### API 服务
 - `POST /v1/chat/completions`（流式 + 非流式）
 - `GET /v1/models`
 
 ### 安全
 - 可配置的 `restrict_to_workspace` 文件访问控制
+- `web_fetch` SSRF 防护
 
 ### CLI
 | 命令 | 描述 |
@@ -79,22 +85,82 @@
 
 内置命令：`/help` `/status` `/new` `/dream` `/stop`
 
-## 路线图
-
-| 阶段 | 状态 | 内容 |
-|------|------|------|
-| Phase 1 | ✅ 完成 | 核心 Agent、9 工具、CLI、配置、会话 |
-| Phase 2 | ✅ 完成 | 记忆、Dream、Skills、Cron、Heartbeat、API |
-| Phase 3 | ⬜ 计划 | 飞书 & QQ 渠道、子代理接口 |
-| Phase 4 | ✅ 完成 | SSRF、文档解析(PDF/DOCX)、MCP 协议 |
-
 ## 快速开始
 
+### 1. 安装
+
 ```bash
+git clone https://github.com/W2doingnothing/OpenCow.git
+cd OpenCow
 pip install -e .
+```
+
+按需安装可选依赖：
+
+```bash
+pip install -e ".[telegram]"   # Telegram 机器人
+pip install -e ".[qq]"         # QQ 机器人（botpy SDK）
+pip install -e ".[search]"     # Tavily 搜索（备用）
+pip install -e ".[mcp]"        # MCP 协议支持
+```
+
+### 2. 初始化配置
+
+```bash
 opencow init
-# 编辑 ~/.opencow/config.json 填入 API key
+```
+
+会在 `~/.opencow/config.json` 生成默认配置模板。
+
+### 3. 编辑配置 — 选择模型并填入 API 密钥
+
+用编辑器打开 `~/.opencow/config.json`。必须设置两项：
+
+**选择模型**，在 `agents.defaults.model` 中填写：
+
+| 模型标识 | 对应模型 |
+|---|---|
+| `deepseek/deepseek-chat` | DeepSeek V3 |
+| `deepseek/deepseek-reasoner` | DeepSeek R1 |
+| `openai/gpt-4o` | OpenAI GPT-4o |
+| `openai/gpt-4.1-mini` | OpenAI 经济版 |
+| `anthropic/claude-sonnet-4-6` | Claude Sonnet 4.6 |
+| `anthropic/claude-opus-4-5` | Claude Opus 4.5 |
+
+**设置凭证**，在 `providers` 下填入对应 provider 的 `apiKey` 和（可选）`apiBase`：
+
+```json
+{
+  "providers": {
+    "deepseek": {
+      "apiKey": "sk-xxxxxxxx",
+      "apiBase": ""
+    }
+  }
+}
+```
+
+使用中转站时，将 `apiBase` 设为代理地址（模型前缀保持不变，如 OpenAI 兼容的中转站填 `openai/gpt-4o`）。
+
+### 4. 验证配置
+
+```bash
+opencow status
+```
+
+### 5. 开始对话
+
+```bash
 opencow agent
+```
+
+输入消息按回车即可。试试这些：
+
+```
+> 你好！
+> 读一下 pyproject.toml，告诉我有哪些依赖
+> 帮我搜索今天的热点新闻
+> 执行 git log --oneline -5
 ```
 
 ## 架构
