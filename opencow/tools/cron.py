@@ -74,8 +74,10 @@ async def add_cron(
     deliver: bool = True,
     tz: str = "",
 ) -> str:
-    """Schedule a reminder or recurring task. After creating, do NOT remove it --
-    the timer will fire automatically and the result will be delivered to the user.
+    """Schedule a reminder or recurring task. Once created, do NOT remove it
+    unless the user explicitly asks you to. If the user asks to modify or
+    replace a job, you must first ask for confirmation before removing any
+    existing job.
 
     For ONE-TIME reminders (e.g. "remind me at 3pm"), use the 'at' parameter
     with an ISO datetime like '2026-05-03T15:00:00'.
@@ -202,7 +204,9 @@ def list_cron(action: str = "list") -> str:
 
 @tool(args_schema=RemoveCronInput)
 async def remove_cron(action: str = "remove", job_id: str = "") -> str:
-    """Remove a scheduled cron job by its ID."""
+    """Remove a scheduled cron job by its ID. Do NOT call this unless the
+    user has explicitly confirmed they want to remove the job. Always ask
+    for confirmation first."""
     if _cron_service is None:
         return "Error: cron service not available"
 

@@ -200,9 +200,14 @@ class OpenCow:
         async def _autocompact_loop() -> None:
             """Periodically check for idle sessions to compact."""
             while self._running:
-                await asyncio.sleep(10 * 60)  # Every 10 minutes
-                if self.autocompact.session_ttl_minutes > 0:
-                    self.memory_store.append_history("AutoCompact: idle check completed")
+                try:
+                    await asyncio.sleep(10 * 60)  # Every 10 minutes
+                    if self.autocompact._ttl > 0:
+                        self.memory_store.append_history("AutoCompact: idle check completed")
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    pass
 
         autocompact_task = asyncio.create_task(_autocompact_loop())
 
