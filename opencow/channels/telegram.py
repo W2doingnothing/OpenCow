@@ -144,10 +144,11 @@ class TelegramChannel(BaseChannel):
         if not self._app or not emoji:
             return
         try:
+            from telegram import ReactionTypeEmoji
             await self._app.bot.set_message_reaction(
                 chat_id=int(chat_id),
                 message_id=message_id,
-                reaction=[{"type": "emoji", "emoji": emoji}],
+                reaction=[ReactionTypeEmoji(emoji=emoji)],
             )
         except Exception:
             pass
