@@ -117,15 +117,17 @@ class MemoryStore:
         return entries
 
     def _trim_history(self) -> None:
-        """Keep only the most recent N entries."""
+        """Keep only the most recent N entries (atomic write via temp file)."""
         try:
             entries = self._read_all_history()
             if len(entries) > self.max_history_entries:
                 trimmed = entries[-self.max_history_entries:]
-                self.history_file.write_text(
+                tmp = self.history_file.with_suffix(".jsonl.tmp")
+                tmp.write_text(
                     "\n".join(json.dumps(e, ensure_ascii=False) for e in trimmed) + "\n",
                     encoding="utf-8",
                 )
+                tmp.replace(self.history_file)
         except Exception:
             logger.exception("Failed to trim history")
 

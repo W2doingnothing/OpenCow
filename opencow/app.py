@@ -143,6 +143,9 @@ class OpenCow:
         # Only inject system prompt on the first message of each session;
         # subsequent messages just pass the user input (history is in checkpointer).
         self._primed_sessions: set[str] = set()
+        # Track last activity time per session for AutoCompact
+        self._session_last_active: dict[str, float] = {}
+        self._session_compacted: set[str] = set()
 
     # -- public API -----------------------------------------------------------
 
@@ -176,7 +179,11 @@ class OpenCow:
         """Load MCP tools from config and register them."""
         from opencow.tools.mcp import load_mcp_tools
 
-        tools = await load_mcp_tools(self.config.mcp_servers)
+        try:
+            tools = await load_mcp_tools(self.config.mcp_servers)
+        except Exception:
+            logger.exception("MCP tool loading failed")
+            return
         for t in tools:
             self.tools.register(t)
         if tools:
@@ -212,16 +219,53 @@ class OpenCow:
         heartbeat_task = asyncio.create_task(self.heartbeat.start())
 
         async def _autocompact_loop() -> None:
-            """Periodically check for idle sessions to compact."""
+            """Periodically check for idle sessions and compact their history."""
             while self._running:
                 try:
                     await asyncio.sleep(10 * 60)  # Every 10 minutes
-                    if self.autocompact._ttl > 0:
-                        self.memory_store.append_history("AutoCompact: idle check completed")
+                    if self.autocompact._ttl <= 0:
+                        continue
+
+                    now = _time.time()
+                    ttl_s = self.autocompact._ttl * 60
+
+                    for key, last_active in list(self._session_last_active.items()):
+                        if key in self._session_compacted:
+                            continue
+                        idle_s = now - last_active
+                        if idle_s < ttl_s:
+                            continue
+
+                        # Read unconsolidated history for this session
+                        cursor = self.memory_store.get_cursor()
+                        entries = self.memory_store.read_unprocessed_history(since_cursor=cursor)
+                        if not entries:
+                            continue
+
+                        # Convert to message dicts for Consolidator
+                        messages = [
+                            {"role": "user" if e.get("content", "").startswith("user:") else "assistant",
+                             "content": e["content"]}
+                            for e in entries[-40:]  # Last 40 entries
+                        ]
+
+                        summary = await self.consolidator.consolidate(messages)
+                        if summary:
+                            self.memory_store.append_history(
+                                f"[AutoCompact] session {key} summary: {summary[:300]}"
+                            )
+                            self.memory_store.set_cursor(
+                                cursor + len(entries)
+                            )
+                            logger.info("AutoCompact: archived session {} ({} entries, {}s idle)",
+                                        key, len(entries), int(idle_s))
+
+                        self._session_compacted.add(key)
+
                 except asyncio.CancelledError:
                     break
                 except Exception:
-                    pass
+                    logger.exception("AutoCompact loop error")
 
         autocompact_task = asyncio.create_task(_autocompact_loop())
 
@@ -470,6 +514,10 @@ class OpenCow:
             input_messages = [("system", system_prompt), ("user", user_content)]
         else:
             input_messages = [("user", user_content)]
+
+        # Track session activity for AutoCompact
+        import time as _time
+        self._session_last_active[key] = _time.time()
 
         try:
             result = await asyncio.wait_for(
