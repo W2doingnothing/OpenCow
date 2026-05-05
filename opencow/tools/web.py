@@ -128,21 +128,21 @@ def web_search(query: str) -> str:
 
 
 @tool(args_schema=WebFetchInput)
-def web_fetch(url: str, prompt: str = "Extract the main content from this page") -> str:
+async def web_fetch(url: str, prompt: str = "Extract the main content from this page") -> str:
     """Fetch and extract content from a web page."""
     url = url.strip(' \t\r\n`"\'')
-    # SSRF protection
-    ok, err = validate_url_target(url)
+    # SSRF protection (async DNS check)
+    ok, err = await validate_url_target(url)
     if not ok:
         return f"Error: URL blocked: {err}"
 
     try:
-        with httpx.Client(
+        async with httpx.AsyncClient(
             timeout=_FETCH_TIMEOUT,
             follow_redirects=True,
             max_redirects=_MAX_REDIRECTS,
         ) as client:
-            response = client.get(
+            response = await client.get(
                 url,
                 headers={"User-Agent": _DEFAULT_USER_AGENT},
             )

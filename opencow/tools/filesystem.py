@@ -21,8 +21,18 @@ def set_workspace_config(workspace: str, restrict: bool) -> None:
 
 def _resolve_path(path_str: str) -> Path:
     p = Path(path_str).expanduser().resolve()
-    if _restrict_to_workspace and not str(p).startswith(str(_workspace_root)):
-        raise PermissionError(f"Access denied: {path_str} is outside workspace {_workspace_root}")
+    if _restrict_to_workspace:
+        # Use strict path containment check — no prefix-match bypass
+        try:
+            p.relative_to(_workspace_root)
+        except ValueError:
+            raise PermissionError(f"Access denied: {path_str} is outside workspace {_workspace_root}")
+        # Resolve symlinks to prevent symlink escapes
+        resolved = p.resolve()
+        try:
+            resolved.relative_to(_workspace_root.resolve())
+        except ValueError:
+            raise PermissionError(f"Access denied: {path_str} resolves outside workspace")
     return p
 
 

@@ -1,5 +1,6 @@
 """Network security — SSRF protection for web_fetch."""
 
+import asyncio
 import ipaddress
 import socket
 from contextlib import suppress
@@ -19,7 +20,7 @@ _BLOCKED_NETWORKS = [
 ]
 
 
-def validate_url_target(url: str) -> tuple[bool, str]:
+async def validate_url_target(url: str) -> tuple[bool, str]:
     """Validate a URL is safe to fetch (blocks internal/private IPs)."""
     try:
         p = urlparse(url)
@@ -31,9 +32,11 @@ def validate_url_target(url: str) -> tuple[bool, str]:
     if not p.hostname:
         return False, "Missing hostname"
 
-    # Resolve DNS and check each IP
+    # Resolve DNS asynchronously to avoid blocking the event loop
     try:
-        addrs = socket.getaddrinfo(p.hostname, None, 0, socket.SOCK_STREAM)
+        addrs = await asyncio.to_thread(
+            socket.getaddrinfo, p.hostname, None, 0, socket.SOCK_STREAM
+        )
     except socket.gaierror as e:
         return False, f"DNS resolution failed: {e}"
 
